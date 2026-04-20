@@ -95,6 +95,10 @@ BEGIN
     DECLARE v_m_expr      VARCHAR(4000);
     DECLARE v_m_pds       INTEGER;
     DECLARE v_m_name      VARCHAR(200);
+    DECLARE v_base_id     INTEGER;
+    DECLARE v_agg_fn      VARCHAR(20);
+    DECLARE v_agg_arg     VARCHAR(4000);
+    DECLARE v_filter_sql  VARCHAR(4000);
 
     DECLARE v_cand_id     INTEGER;
     DECLARE v_cand_name   VARCHAR(200);
@@ -140,21 +144,94 @@ BEGIN
     END IF;
 
     -- ========== 2) Parse metrics ==========
+    -- Each metric may be:
+    --   a) A plain metric with its own METRIC_EXPRESSION (TERADATA dialect), or
+    --   b) A filtered rollup: (base_metric_id, METRIC_FILTER[]) — compiler wraps
+    --      base.aggregate_arg in CASE WHEN <filters> THEN arg ELSE <default> END.
     SET v_i = 1;
     SET v_tok = CASE WHEN COALESCE(p_metrics,'')='' THEN NULL ELSE TRIM(STRTOK(p_metrics, ',', v_i)) END;
     WHILE v_tok IS NOT NULL DO
-        SET v_m_id = NULL;
+        SET v_m_id    = NULL;
+        SET v_m_expr  = NULL;
+        SET v_m_pds   = NULL;
+        SET v_base_id = NULL;
+        SET v_agg_fn  = NULL;
+        SET v_agg_arg = NULL;
         BEGIN
             DECLARE EXIT HANDLER FOR NOT FOUND BEGIN END;
-            SELECT mt.metric_id, CAST(me.expression AS VARCHAR(4000)), mt.primary_dataset_id
-              INTO v_m_id, v_m_expr, v_m_pds
+            SELECT mt.metric_id, CAST(me.expression AS VARCHAR(4000)),
+                   mt.primary_dataset_id, mt.base_metric_id,
+                   mt.aggregate_fn, CAST(mt.aggregate_arg AS VARCHAR(4000))
+              INTO v_m_id, v_m_expr, v_m_pds, v_base_id, v_agg_fn, v_agg_arg
               FROM demo_user.METRIC mt
-              JOIN demo_user.METRIC_EXPRESSION me
+              LEFT JOIN demo_user.METRIC_EXPRESSION me
                    ON me.metric_id = mt.metric_id AND me.dialect = 'TERADATA'
              WHERE mt.model_id = v_model_id AND mt.metric_name = v_tok;
         END;
 
-        IF v_m_id IS NOT NULL THEN
+        -- Filtered rollup: compose expression from base + METRIC_FILTER rows.
+        IF v_m_id IS NOT NULL AND v_base_id IS NOT NULL THEN
+            BEGIN
+                DECLARE v_base_pds INTEGER;
+                DECLARE EXIT HANDLER FOR NOT FOUND BEGIN END;
+                SELECT b.aggregate_fn, CAST(b.aggregate_arg AS VARCHAR(4000)),
+                       b.primary_dataset_id
+                  INTO v_agg_fn, v_agg_arg, v_base_pds
+                  FROM demo_user.METRIC b
+                 WHERE b.metric_id = v_base_id;
+                IF v_m_pds IS NULL THEN SET v_m_pds = v_base_pds; END IF;
+            END;
+
+            -- Build AND-joined filter predicates: "ds_a.fld op val AND ds_b.fld2 op val2".
+            BEGIN
+                DECLARE v_dsn VARCHAR(200);
+                DECLARE v_fn  VARCHAR(200);
+                DECLARE v_fop VARCHAR(10);
+                DECLARE v_fv  VARCHAR(500);
+                DECLARE c_mf CURSOR FOR
+                    SELECT d.dataset_name, f.field_name, mf.op, mf.filter_value
+                      FROM demo_user.METRIC_FILTER mf
+                      JOIN demo_user.FIELD f ON f.field_id = mf.field_id
+                      JOIN demo_user.DATASET d ON d.dataset_id = f.dataset_id
+                     WHERE mf.metric_id = v_m_id
+                     ORDER BY mf.filter_ord;
+                SET v_filter_sql = '';
+                OPEN c_mf;
+                mf_loop:
+                LOOP
+                    FETCH c_mf INTO v_dsn, v_fn, v_fop, v_fv;
+                    IF SQLCODE <> 0 THEN LEAVE mf_loop; END IF;
+                    IF v_filter_sql <> '' THEN
+                        SET v_filter_sql = v_filter_sql || ' AND ';
+                    END IF;
+                    SET v_filter_sql = v_filter_sql ||
+                        v_dsn || '.' || v_fn || ' ' || v_fop || ' ' || v_fv;
+                END LOOP mf_loop;
+                CLOSE c_mf;
+            END;
+
+            IF v_filter_sql = '' OR v_agg_fn IS NULL OR v_agg_arg IS NULL THEN
+                SET p_validation_message =
+                    'Filtered metric "' || v_tok ||
+                    '" is missing base aggregate definition or METRIC_FILTER rows.';
+                LEAVE request_body;
+            END IF;
+
+            -- SUM uses ELSE 0 (zero does not skew sums); AVG/MIN/MAX/COUNT
+            -- use ELSE NULL (NULLs are skipped by those aggregates).
+            IF UPPER(v_agg_fn) = 'SUM' THEN
+                SET v_m_expr = 'SUM(CASE WHEN ' || v_filter_sql ||
+                               ' THEN ' || v_agg_arg || ' ELSE 0 END)';
+            ELSEIF UPPER(v_agg_fn) = 'COUNT_DISTINCT' THEN
+                SET v_m_expr = 'COUNT(DISTINCT CASE WHEN ' || v_filter_sql ||
+                               ' THEN ' || v_agg_arg || ' END)';
+            ELSE
+                SET v_m_expr = v_agg_fn || '(CASE WHEN ' || v_filter_sql ||
+                               ' THEN ' || v_agg_arg || ' END)';
+            END IF;
+        END IF;
+
+        IF v_m_id IS NOT NULL AND v_m_expr IS NOT NULL THEN
             INSERT INTO demo_user.request_metric VALUES (v_m_id, v_tok, v_m_expr, v_m_pds);
 
             -- Required datasets: fields the metric consumes + its primary.
@@ -165,6 +242,25 @@ BEGIN
               JOIN demo_user.DATASET d ON d.dataset_id = f.dataset_id
              WHERE mfr.metric_id = v_m_id
                AND d.dataset_id NOT IN (SELECT dataset_id FROM demo_user.request_required_ds);
+
+            -- For filtered metrics: include the base's field_refs + filter fields.
+            IF v_base_id IS NOT NULL THEN
+                INSERT INTO demo_user.request_required_ds (dataset_id, dataset_name, reason, alias)
+                SELECT DISTINCT d.dataset_id, d.dataset_name, 'metric_base:' || v_tok, d.dataset_name
+                  FROM demo_user.METRIC_FIELD_REF mfr
+                  JOIN demo_user.FIELD f ON f.field_id = mfr.field_id
+                  JOIN demo_user.DATASET d ON d.dataset_id = f.dataset_id
+                 WHERE mfr.metric_id = v_base_id
+                   AND d.dataset_id NOT IN (SELECT dataset_id FROM demo_user.request_required_ds);
+
+                INSERT INTO demo_user.request_required_ds (dataset_id, dataset_name, reason, alias)
+                SELECT DISTINCT d.dataset_id, d.dataset_name, 'metric_filter:' || v_tok, d.dataset_name
+                  FROM demo_user.METRIC_FILTER mf
+                  JOIN demo_user.FIELD f ON f.field_id = mf.field_id
+                  JOIN demo_user.DATASET d ON d.dataset_id = f.dataset_id
+                 WHERE mf.metric_id = v_m_id
+                   AND d.dataset_id NOT IN (SELECT dataset_id FROM demo_user.request_required_ds);
+            END IF;
 
             IF v_m_pds IS NOT NULL THEN
                 INSERT INTO demo_user.request_required_ds (dataset_id, dataset_name, reason, alias)

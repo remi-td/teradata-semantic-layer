@@ -1,0 +1,128 @@
+category: Filtered Metrics
+description: >
+  Phase 1 feature: a metric with base_metric_id + METRIC_FILTER rows is
+  compiled as AGG(CASE WHEN <filters> THEN <base_arg> ELSE <default> END).
+  These cases exercise the school_gradebook scenario.
+
+cases:
+  - id: FM01
+    title: Base metric alongside a single-filter variant (exams only)
+    category: Filtered Metrics
+    request:
+      model: school_gradebook
+      metrics: score_avg,exam_score_avg
+      dimensions: student.major
+    expected_sql: |
+      SELECT student.major,
+             AVG(assessment.score)                                                  AS score_avg,
+             AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                       THEN assessment.score END)                                   AS exam_score_avg
+        FROM demo_user.gb_assessment      AS assessment
+        JOIN demo_user.gb_student         AS student
+          ON assessment.student_id = student.student_id
+        JOIN demo_user.gb_assessment_type AS assessment_type
+          ON assessment.type_code = assessment_type.type_code
+       GROUP BY student.major
+    expected: PASS
+    notes: |
+      Tests that the compiler preserves the plain aggregate for score_avg
+      and wraps a CASE-WHEN only around the filtered variant. The
+      assessment_type dim is auto-included because the filter references
+      its category_lvl1 column.
+
+  - id: FM02
+    title: Multiple single-filter variants over the same base
+    category: Filtered Metrics
+    request:
+      model: school_gradebook
+      metrics: exam_score_avg,homework_score_avg,final_exam_score_avg
+      dimensions: student.major
+    expected_sql: |
+      SELECT student.major,
+             AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                       THEN assessment.score END) AS exam_score_avg,
+             AVG(CASE WHEN assessment_type.category_lvl1 = 'HW'
+                       THEN assessment.score END) AS homework_score_avg,
+             AVG(CASE WHEN assessment_type.category_lvl2 = 'EX_FINAL'
+                       THEN assessment.score END) AS final_exam_score_avg
+        FROM demo_user.gb_assessment      AS assessment
+        JOIN demo_user.gb_student         AS student
+          ON assessment.student_id = student.student_id
+        JOIN demo_user.gb_assessment_type AS assessment_type
+          ON assessment.type_code = assessment_type.type_code
+       GROUP BY student.major
+    expected: PASS
+    notes: |
+      All three metrics filter on the same dim (assessment_type) so the
+      compiler should join it exactly once.
+
+  - id: FM03
+    title: Composite filter spanning two datasets (AND across dims)
+    category: Filtered Metrics
+    request:
+      model: school_gradebook
+      metrics: senior_exam_score_avg
+      dimensions: course.subject
+    expected_sql: |
+      SELECT course.subject,
+             AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                       AND student.class_year = 4
+                       THEN assessment.score END) AS senior_exam_score_avg
+        FROM demo_user.gb_assessment      AS assessment
+        JOIN demo_user.gb_course          AS course
+          ON assessment.course_id = course.course_id
+        JOIN demo_user.gb_assessment_type AS assessment_type
+          ON assessment.type_code = assessment_type.type_code
+        JOIN demo_user.gb_student         AS student
+          ON assessment.student_id = student.student_id
+       GROUP BY course.subject
+    expected: PASS
+    notes: |
+      Filter predicates reference fields on two different dims
+      (assessment_type.category_lvl1 AND student.class_year). Compiler
+      must auto-join both filter datasets.
+
+  - id: FM04
+    title: COUNT-base filtered variant (exam_count)
+    category: Filtered Metrics
+    request:
+      model: school_gradebook
+      metrics: exam_count,assessment_count
+      dimensions: course.subject
+    expected_sql: |
+      SELECT course.subject,
+             COUNT(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                         THEN assessment.assessment_id END)     AS exam_count,
+             COUNT(assessment.assessment_id)                    AS assessment_count
+        FROM demo_user.gb_assessment      AS assessment
+        JOIN demo_user.gb_course          AS course
+          ON assessment.course_id = course.course_id
+        JOIN demo_user.gb_assessment_type AS assessment_type
+          ON assessment.type_code = assessment_type.type_code
+       GROUP BY course.subject
+    expected: PASS
+    notes: |
+      COUNT uses ELSE NULL (implicit) rather than ELSE 0 so the filtered
+      rows drop out of the count naturally. Tests that aggregate_fn=COUNT
+      is handled correctly by the compiler.
+
+  - id: FM05
+    title: Filter dim is also an explicit dimension
+    category: Filtered Metrics
+    request:
+      model: school_gradebook
+      metrics: exam_score_avg
+      dimensions: assessment_type.category_lvl1
+    expected_sql: |
+      SELECT assessment_type.category_lvl1,
+             AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                       THEN assessment.score END) AS exam_score_avg
+        FROM demo_user.gb_assessment      AS assessment
+        JOIN demo_user.gb_assessment_type AS assessment_type
+          ON assessment.type_code = assessment_type.type_code
+       GROUP BY assessment_type.category_lvl1
+    expected: PASS
+    notes: |
+      When the filter dim is also explicitly requested as a GROUP BY, the
+      compiler must not double-join. Result will include one row per
+      category with non-null score only on the 'EX' row.

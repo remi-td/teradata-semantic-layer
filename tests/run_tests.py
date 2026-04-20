@@ -238,6 +238,11 @@ def run_one(cur, c, label_idx):
 
     ref_sql = c.get("expected_sql")
     if ref_sql:
+        # Reference SQL is authored with the placeholder schema 'demo_user';
+        # substitute the active CATALOG_DB so it runs against whichever deploy
+        # we are testing (same convention as the CLI's _render_sql).
+        import re as _re
+        ref_sql = _re.sub(r"\bdemo_user\b", CATALOG_DB, ref_sql)
         print("**Reference SQL:**")
         code_sql(textwrap.dedent(ref_sql).strip())
         try:

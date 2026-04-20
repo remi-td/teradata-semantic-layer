@@ -89,6 +89,9 @@ COMMENT ON COLUMN demo_user.METRIC.is_additive AS '1 = can be summed across grou
 COMMENT ON COLUMN demo_user.METRIC.is_certified AS '1 = reviewed and approved for production use.';
 COMMENT ON COLUMN demo_user.METRIC.owner_team AS 'Team or role that owns the metric definition.';
 COMMENT ON COLUMN demo_user.METRIC.default_time_grain AS 'Default time grain: DAY | WEEK | MONTH | QUARTER | YEAR.';
+COMMENT ON COLUMN demo_user.METRIC.base_metric_id AS 'Optional FK to another METRIC. When set, this metric is a filtered rollup of the base: compiler wraps base aggregate_arg in CASE WHEN <filters> THEN arg ELSE default END.';
+COMMENT ON COLUMN demo_user.METRIC.aggregate_fn AS 'Optional aggregate function (SUM, AVG, MIN, MAX, COUNT, COUNT_DISTINCT). Populated for metrics that can serve as a filtered-metric base; NULL for derived/ratio metrics that rely solely on METRIC_EXPRESSION.';
+COMMENT ON COLUMN demo_user.METRIC.aggregate_arg AS 'Argument expression to aggregate_fn (e.g. "fact.amount" for SUM(fact.amount)). Compiler references this when composing filtered variants.';
 
 -- METRIC_EXPRESSION
 COMMENT ON TABLE demo_user.METRIC_EXPRESSION AS 'Multi-dialect SQL expression body for a metric (one row per dialect).';
@@ -101,6 +104,28 @@ COMMENT ON TABLE demo_user.METRIC_FIELD_REF AS 'Records which fields a metric co
 COMMENT ON COLUMN demo_user.METRIC_FIELD_REF.metric_id AS 'FK to METRIC.';
 COMMENT ON COLUMN demo_user.METRIC_FIELD_REF.field_id AS 'FK to FIELD.';
 COMMENT ON COLUMN demo_user.METRIC_FIELD_REF.dep_role AS 'MEASURE (aggregated) | FILTER (WHERE) | GROUP_BY.';
+
+-- METRIC_FILTER
+COMMENT ON TABLE demo_user.METRIC_FILTER AS 'Predicates composing a filtered-rollup metric: compiler joins these with AND inside a CASE WHEN wrapper around the base metric aggregate_arg.';
+COMMENT ON COLUMN demo_user.METRIC_FILTER.metric_id AS 'FK to METRIC (the filtered variant).';
+COMMENT ON COLUMN demo_user.METRIC_FILTER.filter_ord AS 'Stable ordering for composite filters; ordinal in the AND chain.';
+COMMENT ON COLUMN demo_user.METRIC_FILTER.field_id AS 'FK to FIELD — the column to filter on. Dataset containing this field is auto-joined by the compiler.';
+COMMENT ON COLUMN demo_user.METRIC_FILTER.op AS 'Operator: = | <> | IN | LIKE | < | <= | > | >=.';
+COMMENT ON COLUMN demo_user.METRIC_FILTER.filter_value AS 'Literal value; strings must already be quoted, IN-lists must include parens.';
+
+-- FIELD_HIERARCHY
+COMMENT ON TABLE demo_user.FIELD_HIERARCHY AS 'Named ordered chain of FIELDs representing a drill-up/drill-down path. Metadata only; the compiler does not rewrite queries based on it.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY.hierarchy_id AS 'Surrogate primary key.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY.model_id AS 'FK to SEMANTIC_MODEL.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY.hierarchy_name AS 'Business name (e.g. "product_hierarchy"). Unique within model.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY.description AS 'Purpose of the hierarchy.';
+
+-- FIELD_HIERARCHY_LEVEL
+COMMENT ON TABLE demo_user.FIELD_HIERARCHY_LEVEL AS 'Levels of a FIELD_HIERARCHY, ordered from top (most aggregated) to leaf.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.hierarchy_id AS 'FK to FIELD_HIERARCHY.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.level_ord AS '1 = top (most aggregated); monotonically increasing down the hierarchy.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.field_id AS 'FK to FIELD participating at this level.';
+COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.level_name AS 'Business label for this level (e.g. "Country", "Region").';
 
 -- SEMANTIC_VIEW
 COMMENT ON TABLE demo_user.SEMANTIC_VIEW AS 'Curated projection over a model — exposes a chosen subset of dimensions and metrics.';

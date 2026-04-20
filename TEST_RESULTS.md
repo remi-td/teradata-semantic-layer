@@ -1,7 +1,7 @@
 # Test Results — Teradata Semantic Catalog
 
 - Run against `demo_user@mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com`
-- Cases loaded: **27**  
+- Cases loaded: **32**  
 - Source: `/Users/remi.turpaud/Code/semantic-layer/tests/cases/*.yaml`
 
 ## Case results
@@ -56,7 +56,7 @@ SELECT lineitem.l_returnflag AS l_returnflag, lineitem.l_linestatus AS l_linesta
 ```sql
 SELECT lineitem.l_returnflag, lineitem.l_linestatus,
        AVG(lineitem.l_quantity) AS avg_qty
-  FROM demo_user.lineitem AS lineitem
+  FROM sem_engine.lineitem AS lineitem
  GROUP BY lineitem.l_returnflag, lineitem.l_linestatus
 ```
 
@@ -184,7 +184,7 @@ SELECT orders.o_orderstatus AS o_orderstatus, COUNT(DISTINCT orders.o_orderkey) 
   FROM sem_engine.orders AS orders WHERE orders.o_orderstatus = O GROUP BY orders.o_orderstatus
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 4852] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 4968] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
 
 **Outcome:** RUNTIME_ERROR
 
@@ -261,11 +261,11 @@ SELECT region.r_name AS r_name, SUM(lineitem.l_extendedprice * (1 - lineitem.l_d
 ```sql
 SELECT region.r_name,
        SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
-  JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
-  JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
-  JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
-  JOIN demo_user.region   AS region   ON nation.n_regionkey = region.r_regionkey
+  FROM sem_engine.lineitem AS lineitem
+  JOIN sem_engine.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+  JOIN sem_engine.customer AS customer ON orders.o_custkey = customer.c_custkey
+  JOIN sem_engine.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+  JOIN sem_engine.region   AS region   ON nation.n_regionkey = region.r_regionkey
  GROUP BY region.r_name
 ```
 
@@ -340,10 +340,10 @@ SELECT customer_nation.n_name AS customer_nation_n_name, SUM(lineitem.l_extended
 ```sql
 SELECT nation.n_name AS customer_nation_n_name,
        SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
-  JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
-  JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
-  JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+  FROM sem_engine.lineitem AS lineitem
+  JOIN sem_engine.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+  JOIN sem_engine.customer AS customer ON orders.o_custkey = customer.c_custkey
+  JOIN sem_engine.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
  GROUP BY nation.n_name
 ```
 
@@ -403,9 +403,9 @@ SELECT supplier_nation.n_name AS supplier_nation_n_name, SUM(lineitem.l_extended
 ```sql
 SELECT nation.n_name AS supplier_nation_n_name,
        SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
-  JOIN demo_user.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
-  JOIN demo_user.nation   AS nation   ON supplier.s_nationkey = nation.n_nationkey
+  FROM sem_engine.lineitem AS lineitem
+  JOIN sem_engine.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
+  JOIN sem_engine.nation   AS nation   ON supplier.s_nationkey = nation.n_nationkey
  GROUP BY nation.n_name
 ```
 
@@ -476,12 +476,12 @@ SELECT supplier_nation.n_name AS supplier_nation_n_name, customer_nation.n_name 
 SELECT cn.n_name AS customer_nation_n_name,
        sn.n_name AS supplier_nation_n_name,
        SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
-  JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
-  JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
-  JOIN demo_user.nation   AS cn       ON customer.c_nationkey = cn.n_nationkey
-  JOIN demo_user.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
-  JOIN demo_user.nation   AS sn       ON supplier.s_nationkey = sn.n_nationkey
+  FROM sem_engine.lineitem AS lineitem
+  JOIN sem_engine.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+  JOIN sem_engine.customer AS customer ON orders.o_custkey = customer.c_custkey
+  JOIN sem_engine.nation   AS cn       ON customer.c_nationkey = cn.n_nationkey
+  JOIN sem_engine.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
+  JOIN sem_engine.nation   AS sn       ON supplier.s_nationkey = sn.n_nationkey
  GROUP BY cn.n_name, sn.n_name
 ```
 
@@ -615,8 +615,8 @@ SELECT TRUNC(orders.o_orderdate, 'Y') AS o_orderdate_year, SUM(lineitem.l_extend
 ```sql
 SELECT TRUNC(orders.o_orderdate, 'Y') AS o_orderdate_year,
        SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
-  JOIN demo_user.orders AS orders ON lineitem.l_orderkey = orders.o_orderkey
+  FROM sem_engine.lineitem AS lineitem
+  JOIN sem_engine.orders AS orders ON lineitem.l_orderkey = orders.o_orderkey
  GROUP BY TRUNC(orders.o_orderdate, 'Y')
 ```
 
@@ -677,7 +677,7 @@ SELECT TRUNC(orders.o_orderdate, 'Q') AS o_orderdate_quarter, COUNT(DISTINCT ord
 ```sql
 SELECT TRUNC(orders.o_orderdate, 'Q') AS o_orderdate_quarter,
        COUNT(DISTINCT orders.o_orderkey) AS count_orders
-  FROM demo_user.orders AS orders
+  FROM sem_engine.orders AS orders
  GROUP BY TRUNC(orders.o_orderdate, 'Q')
 ```
 
@@ -730,7 +730,7 @@ SELECT SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
 **Reference SQL:**
 ```sql
 SELECT SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
-  FROM demo_user.lineitem AS lineitem
+  FROM sem_engine.lineitem AS lineitem
 ```
 
 **Reference results:**
@@ -796,8 +796,8 @@ SELECT DISTINCT supplier_nation.n_name AS supplier_nation_n_name
 **Reference SQL:**
 ```sql
 SELECT DISTINCT nation.n_name AS supplier_nation_n_name
-  FROM demo_user.supplier AS supplier
-  JOIN demo_user.nation   AS nation ON supplier.s_nationkey = nation.n_nationkey
+  FROM sem_engine.supplier AS supplier
+  JOIN sem_engine.nation   AS nation ON supplier.s_nationkey = nation.n_nationkey
 ```
 
 **Reference results:**
@@ -911,9 +911,298 @@ WHERE o.order_status IN ('SHIPPED','DELIVERED')
   AND o.order_date >= ADD_MONTHS(CURRENT_DATE, -36)) AS sales_cube
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 4852] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 4968] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
 
 **Outcome:** RUNTIME_ERROR
+
+
+### FM01 — Base metric alongside a single-filter variant (exams only)
+
+**Category:** Filtered Metrics  
+**Source:** `13_filtered_metrics.yaml`  
+**Expected outcome:** `PASS`  
+**Notes:** Tests that the compiler preserves the plain aggregate for score_avg
+and wraps a CASE-WHEN only around the filtered variant. The
+assessment_type dim is auto-included because the filter references
+its category_lvl1 column.
+
+
+**Request:**
+- `model` = `'school_gradebook'`
+- `metrics` = `'score_avg,exam_score_avg'`
+- `dimensions` = `'student.major'`
+
+**is_valid:** `1` | **anchor:** `assessment` | **joined:** `assessment, student, assessment_type`
+
+**Compiled SQL:**
+```sql
+LOCKING ROW FOR ACCESS 
+SELECT student.major AS major, AVG(assessment.score) AS score_avg, AVG(CASE WHEN assessment_type.category_lvl1 = 'EX' THEN assessment.score END) AS exam_score_avg
+  FROM sem_engine.gb_assessment AS assessment 
+    INNER JOIN sem_engine.gb_student AS student ON assessment.student_id = student.student_id 
+    INNER JOIN sem_engine.gb_assessment_type AS assessment_type ON assessment.type_code = assessment_type.type_code GROUP BY student.major
+```
+
+**Compiled-SQL results:**
+| major | score_avg | exam_score_avg |
+| --- | --- | --- |
+| PHYSICS | 77 | 70.5 |
+| MATH | 69.3846 | 85.8333 |
+| COMP_SCI | 67.4118 | 73 |
+
+**Reference SQL:**
+```sql
+SELECT student.major,
+       AVG(assessment.score)                                                  AS score_avg,
+       AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                 THEN assessment.score END)                                   AS exam_score_avg
+  FROM sem_engine.gb_assessment      AS assessment
+  JOIN sem_engine.gb_student         AS student
+    ON assessment.student_id = student.student_id
+  JOIN sem_engine.gb_assessment_type AS assessment_type
+    ON assessment.type_code = assessment_type.type_code
+ GROUP BY student.major
+```
+
+**Reference results:**
+| major | score_avg | exam_score_avg |
+| --- | --- | --- |
+| PHYSICS | 77 | 70.5 |
+| MATH | 69.3846 | 85.8333 |
+| COMP_SCI | 67.4118 | 73 |
+
+**Outcome:** PASS — rows match reference.
+
+
+### FM02 — Multiple single-filter variants over the same base
+
+**Category:** Filtered Metrics  
+**Source:** `13_filtered_metrics.yaml`  
+**Expected outcome:** `PASS`  
+**Notes:** All three metrics filter on the same dim (assessment_type) so the
+compiler should join it exactly once.
+
+
+**Request:**
+- `model` = `'school_gradebook'`
+- `metrics` = `'exam_score_avg,homework_score_avg,final_exam_score_avg'`
+- `dimensions` = `'student.major'`
+
+**is_valid:** `1` | **anchor:** `assessment` | **joined:** `assessment, student, assessment_type`
+
+**Compiled SQL:**
+```sql
+LOCKING ROW FOR ACCESS 
+SELECT student.major AS major, AVG(CASE WHEN assessment_type.category_lvl1 = 'EX' THEN assessment.score END) AS exam_score_avg, AVG(CASE WHEN assessment_type.category_lvl1 = 'HW' THEN assessment.score END) AS homework_score_avg, AVG(CASE WHEN assessment_type.category_lvl2 = 'EX_FINAL' THEN assessment.score END) AS final_exam_score_avg
+  FROM sem_engine.gb_assessment AS assessment 
+    INNER JOIN sem_engine.gb_student AS student ON assessment.student_id = student.student_id 
+    INNER JOIN sem_engine.gb_assessment_type AS assessment_type ON assessment.type_code = assessment_type.type_code GROUP BY student.major
+```
+
+**Compiled-SQL results:**
+| major | exam_score_avg | homework_score_avg | final_exam_score_avg |
+| --- | --- | --- | --- |
+| PHYSICS | 70.5 | 80 | 73 |
+| MATH | 85.8333 | 42.8 | 88.3333 |
+| COMP_SCI | 73 | 56.1667 | 77 |
+
+**Reference SQL:**
+```sql
+SELECT student.major,
+       AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                 THEN assessment.score END) AS exam_score_avg,
+       AVG(CASE WHEN assessment_type.category_lvl1 = 'HW'
+                 THEN assessment.score END) AS homework_score_avg,
+       AVG(CASE WHEN assessment_type.category_lvl2 = 'EX_FINAL'
+                 THEN assessment.score END) AS final_exam_score_avg
+  FROM sem_engine.gb_assessment      AS assessment
+  JOIN sem_engine.gb_student         AS student
+    ON assessment.student_id = student.student_id
+  JOIN sem_engine.gb_assessment_type AS assessment_type
+    ON assessment.type_code = assessment_type.type_code
+ GROUP BY student.major
+```
+
+**Reference results:**
+| major | exam_score_avg | homework_score_avg | final_exam_score_avg |
+| --- | --- | --- | --- |
+| PHYSICS | 70.5 | 80 | 73 |
+| MATH | 85.8333 | 42.8 | 88.3333 |
+| COMP_SCI | 73 | 56.1667 | 77 |
+
+**Outcome:** PASS — rows match reference.
+
+
+### FM03 — Composite filter spanning two datasets (AND across dims)
+
+**Category:** Filtered Metrics  
+**Source:** `13_filtered_metrics.yaml`  
+**Expected outcome:** `PASS`  
+**Notes:** Filter predicates reference fields on two different dims
+(assessment_type.category_lvl1 AND student.class_year). Compiler
+must auto-join both filter datasets.
+
+
+**Request:**
+- `model` = `'school_gradebook'`
+- `metrics` = `'senior_exam_score_avg'`
+- `dimensions` = `'course.subject'`
+
+**is_valid:** `1` | **anchor:** `assessment` | **joined:** `assessment, student, course, assessment_type`
+
+**Compiled SQL:**
+```sql
+LOCKING ROW FOR ACCESS 
+SELECT course.subject AS subject, AVG(CASE WHEN assessment_type.category_lvl1 = 'EX' AND student.class_year = 4 THEN assessment.score END) AS senior_exam_score_avg
+  FROM sem_engine.gb_assessment AS assessment 
+    INNER JOIN sem_engine.gb_student AS student ON assessment.student_id = student.student_id 
+    INNER JOIN sem_engine.gb_course AS course ON assessment.course_id = course.course_id 
+    INNER JOIN sem_engine.gb_assessment_type AS assessment_type ON assessment.type_code = assessment_type.type_code GROUP BY course.subject
+```
+
+**Compiled-SQL results:**
+| subject | senior_exam_score_avg |
+| --- | --- |
+| PHYSICS | 70.5 |
+| MATH |  |
+| COMP_SCI |  |
+
+**Reference SQL:**
+```sql
+SELECT course.subject,
+       AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                 AND student.class_year = 4
+                 THEN assessment.score END) AS senior_exam_score_avg
+  FROM sem_engine.gb_assessment      AS assessment
+  JOIN sem_engine.gb_course          AS course
+    ON assessment.course_id = course.course_id
+  JOIN sem_engine.gb_assessment_type AS assessment_type
+    ON assessment.type_code = assessment_type.type_code
+  JOIN sem_engine.gb_student         AS student
+    ON assessment.student_id = student.student_id
+ GROUP BY course.subject
+```
+
+**Reference results:**
+| subject | senior_exam_score_avg |
+| --- | --- |
+| PHYSICS | 70.5 |
+| MATH |  |
+| COMP_SCI |  |
+
+**Outcome:** PASS — rows match reference.
+
+
+### FM04 — COUNT-base filtered variant (exam_count)
+
+**Category:** Filtered Metrics  
+**Source:** `13_filtered_metrics.yaml`  
+**Expected outcome:** `PASS`  
+**Notes:** COUNT uses ELSE NULL (implicit) rather than ELSE 0 so the filtered
+rows drop out of the count naturally. Tests that aggregate_fn=COUNT
+is handled correctly by the compiler.
+
+
+**Request:**
+- `model` = `'school_gradebook'`
+- `metrics` = `'exam_count,assessment_count'`
+- `dimensions` = `'course.subject'`
+
+**is_valid:** `1` | **anchor:** `assessment` | **joined:** `assessment, course, assessment_type`
+
+**Compiled SQL:**
+```sql
+LOCKING ROW FOR ACCESS 
+SELECT course.subject AS subject, COUNT(assessment.assessment_id) AS assessment_count, COUNT(CASE WHEN assessment_type.category_lvl1 = 'EX' THEN assessment.assessment_id END) AS exam_count
+  FROM sem_engine.gb_assessment AS assessment 
+    INNER JOIN sem_engine.gb_course AS course ON assessment.course_id = course.course_id 
+    INNER JOIN sem_engine.gb_assessment_type AS assessment_type ON assessment.type_code = assessment_type.type_code GROUP BY course.subject
+```
+
+**Compiled-SQL results:**
+| subject | assessment_count | exam_count |
+| --- | --- | --- |
+| PHYSICS | 5 | 2 |
+| MATH | 10 | 4 |
+| COMP_SCI | 20 | 10 |
+
+**Reference SQL:**
+```sql
+SELECT course.subject,
+       COUNT(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                   THEN assessment.assessment_id END)     AS exam_count,
+       COUNT(assessment.assessment_id)                    AS assessment_count
+  FROM sem_engine.gb_assessment      AS assessment
+  JOIN sem_engine.gb_course          AS course
+    ON assessment.course_id = course.course_id
+  JOIN sem_engine.gb_assessment_type AS assessment_type
+    ON assessment.type_code = assessment_type.type_code
+ GROUP BY course.subject
+```
+
+**Reference results:**
+| subject | exam_count | assessment_count |
+| --- | --- | --- |
+| PHYSICS | 2 | 5 |
+| MATH | 4 | 10 |
+| COMP_SCI | 10 | 20 |
+
+**Outcome:** PASS — rows match reference.
+
+
+### FM05 — Filter dim is also an explicit dimension
+
+**Category:** Filtered Metrics  
+**Source:** `13_filtered_metrics.yaml`  
+**Expected outcome:** `PASS`  
+**Notes:** When the filter dim is also explicitly requested as a GROUP BY, the
+compiler must not double-join. Result will include one row per
+category with non-null score only on the 'EX' row.
+
+
+**Request:**
+- `model` = `'school_gradebook'`
+- `metrics` = `'exam_score_avg'`
+- `dimensions` = `'assessment_type.category_lvl1'`
+
+**is_valid:** `1` | **anchor:** `assessment` | **joined:** `assessment, assessment_type`
+
+**Compiled SQL:**
+```sql
+LOCKING ROW FOR ACCESS 
+SELECT assessment_type.category_lvl1 AS category_lvl1, AVG(CASE WHEN assessment_type.category_lvl1 = 'EX' THEN assessment.score END) AS exam_score_avg
+  FROM sem_engine.gb_assessment AS assessment 
+    INNER JOIN sem_engine.gb_assessment_type AS assessment_type ON assessment.type_code = assessment_type.type_code GROUP BY assessment_type.category_lvl1
+```
+
+**Compiled-SQL results:**
+| category_lvl1 | exam_score_avg |
+| --- | --- |
+| HW |  |
+| PR |  |
+| EX | 77.5 |
+| QZ |  |
+
+**Reference SQL:**
+```sql
+SELECT assessment_type.category_lvl1,
+       AVG(CASE WHEN assessment_type.category_lvl1 = 'EX'
+                 THEN assessment.score END) AS exam_score_avg
+  FROM sem_engine.gb_assessment      AS assessment
+  JOIN sem_engine.gb_assessment_type AS assessment_type
+    ON assessment.type_code = assessment_type.type_code
+ GROUP BY assessment_type.category_lvl1
+```
+
+**Reference results:**
+| category_lvl1 | exam_score_avg |
+| --- | --- |
+| HW |  |
+| PR |  |
+| EX | 77.5 |
+| QZ |  |
+
+**Outcome:** PASS — rows match reference.
 
 
 ## Summary
@@ -947,6 +1236,11 @@ WHERE o.order_status IN ('SHIPPED','DELIVERED')
 | SL01 | Sort / limit | Top-5 customers by revenue (ORDER BY alias + TOP) | PASS | NOT_SUPPORTED | MISMATCH | 10_sort_limit.yaml |
 | MD01 | Metric-driven join | promo_revenue alone (needs part via METRIC_FIELD_REF) | PASS | NOT_SUPPORTED | MISMATCH | 11_metric_driven_join.yaml |
 | CB01 | Cube | exec_dashboard cube — total_net_revenue (scalar) | RUNTIME_ERROR | RUNTIME_ERROR | MATCH | 12_cube_source_query.yaml |
+| FM01 | Filtered Metrics | Base metric alongside a single-filter variant (exams only) | PASS | PASS | MATCH | 13_filtered_metrics.yaml |
+| FM02 | Filtered Metrics | Multiple single-filter variants over the same base | PASS | PASS | MATCH | 13_filtered_metrics.yaml |
+| FM03 | Filtered Metrics | Composite filter spanning two datasets (AND across dims) | PASS | PASS | MATCH | 13_filtered_metrics.yaml |
+| FM04 | Filtered Metrics | COUNT-base filtered variant (exam_count) | PASS | PASS | MATCH | 13_filtered_metrics.yaml |
+| FM05 | Filtered Metrics | Filter dim is also an explicit dimension | PASS | PASS | MATCH | 13_filtered_metrics.yaml |
 
 
 ### Outcome distribution
@@ -954,7 +1248,7 @@ WHERE o.order_status IN ('SHIPPED','DELIVERED')
 | outcome | count |
 | --- | --- |
 | NOT_SUPPORTED | 16 |
-| PASS | 9 |
+| PASS | 14 |
 | RUNTIME_ERROR | 2 |
 
 
@@ -962,7 +1256,7 @@ WHERE o.order_status IN ('SHIPPED','DELIVERED')
 
 | agreement | count |
 | --- | --- |
-| MATCH | 11 |
+| MATCH | 16 |
 | MISMATCH | 16 |
 
 

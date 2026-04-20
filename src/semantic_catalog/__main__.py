@@ -102,7 +102,7 @@ def _cmd_deploy(args: argparse.Namespace) -> int:
     for f in files:
         print(f"=> {f.name}")
         try:
-            text = f.read_text()
+            text = _render_sql(f.read_text(), settings.catalog_db)
             _submit_sql_file(cur, text, mode=args.mode)
             print(f"   ok")
         except Exception as e:  # noqa: BLE001
@@ -200,6 +200,7 @@ _CORE_SEQUENCE: list[tuple[str, str]] = [
     ("split", "03_ddl_relationships"),
     ("split", "04_ddl_metrics"),
     ("split", "05_ddl_views"),
+    ("split", "05a_ddl_hierarchies"),
     ("split", "06_ddl_metadata"),
     ("split", "07_comments"),
     ("split", "08_collect_stats"),

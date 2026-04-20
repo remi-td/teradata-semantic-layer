@@ -80,6 +80,7 @@ TEST_REPORT.local.md
 *.log
 nohup.out
 
+misc
 # Bundled SQL is re-copied from sql/ at build time; keep the source of
 # truth in ./sql and ignore the in-package mirror. (Comment out if you
 # prefer the mirror to live in git too.)

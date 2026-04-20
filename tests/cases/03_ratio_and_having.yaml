@@ -1,0 +1,54 @@
+category: Ratio metric / HAVING
+description: >
+  Ratio-style metrics (divide-safe with NULLIFZERO) and HAVING on ratio
+  expressions. These exercise the metric-expression substitution path.
+
+cases:
+  - id: R01
+    title: promo_share by region (5-hop + part)
+    category: Ratio
+    request:
+      model: tpch_orders
+      metrics: promo_share
+      dimensions: orders.o_orderpriority,customer.c_mktsegment,nation.n_name,region.r_name
+    expected_sql: |
+      SELECT orders.o_orderpriority, customer.c_mktsegment,
+             nation.n_name, region.r_name,
+             CAST(SUM(CASE WHEN part.p_type LIKE 'PROMO%'
+                           THEN lineitem.l_extendedprice*(1 - lineitem.l_discount)
+                           ELSE 0 END) AS DECIMAL(18,6))
+             / NULLIFZERO(SUM(lineitem.l_extendedprice*(1 - lineitem.l_discount))) AS promo_share
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey   = customer.c_custkey
+        JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+        JOIN demo_user.region   AS region   ON nation.n_regionkey   = region.r_regionkey
+        JOIN demo_user.part     AS part     ON lineitem.l_partkey   = part.p_partkey
+       GROUP BY orders.o_orderpriority, customer.c_mktsegment, nation.n_name, region.r_name
+    expected: PASS
+
+  - id: R02
+    title: HAVING promo_share > 0.1
+    category: HAVING
+    request:
+      model: tpch_orders
+      metrics: promo_share
+      dimensions: customer.c_mktsegment,orders.o_orderpriority,nation.n_name
+      having: "promo_share|>|0.1"
+    expected_sql: |
+      SELECT customer.c_mktsegment, orders.o_orderpriority, nation.n_name,
+             CAST(SUM(CASE WHEN part.p_type LIKE 'PROMO%'
+                           THEN lineitem.l_extendedprice*(1 - lineitem.l_discount)
+                           ELSE 0 END) AS DECIMAL(18,6))
+             / NULLIFZERO(SUM(lineitem.l_extendedprice*(1 - lineitem.l_discount))) AS promo_share
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey   = customer.c_custkey
+        JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+        JOIN demo_user.part     AS part     ON lineitem.l_partkey   = part.p_partkey
+       GROUP BY customer.c_mktsegment, orders.o_orderpriority, nation.n_name
+      HAVING (CAST(SUM(CASE WHEN part.p_type LIKE 'PROMO%'
+                            THEN lineitem.l_extendedprice*(1 - lineitem.l_discount)
+                            ELSE 0 END) AS DECIMAL(18,6))
+              / NULLIFZERO(SUM(lineitem.l_extendedprice*(1 - lineitem.l_discount)))) > 0.1
+    expected: PASS

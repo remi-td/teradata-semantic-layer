@@ -1,0 +1,45 @@
+category: Cube scenario (source_query)
+description: >
+  DATASET.DataBaseName is NULL and source_query is set. The compiler wraps
+  the cube SQL as a derived table in the FROM clause.
+
+cases:
+  - id: CB01
+    title: exec_dashboard cube — total_net_revenue (scalar)
+    category: Cube
+    request:
+      model: exec_dashboard
+      metrics: total_net_revenue
+    # Reference: manually execute the cube SQL and sum net_revenue.
+    # The cube's source_query is stored in DATASET.source_query; the
+    # compiler should wrap it as `(source_query) AS sales_cube`.
+    expected_sql: |
+      SELECT SUM(sc.net_revenue) AS total_net_revenue
+        FROM (
+          SELECT o.order_id, ol.product_id, o.order_date,
+                 r.region_name AS region, c.country_name AS country,
+                 ch.channel_name AS sales_channel,
+                 cust.segment AS customer_segment,
+                 p.category AS product_category, p.brand AS product_brand,
+                 CASE WHEN cust.first_order_date >= o.order_date - INTERVAL '90' DAY
+                      THEN 1 ELSE 0 END AS is_new_customer,
+                 ol.quantity * ol.unit_price AS gross_revenue,
+                 ol.quantity * ol.unit_price * (1 - COALESCE(o.discount_pct, 0)) AS net_revenue,
+                 ol.quantity AS units_sold,
+                 CASE WHEN o.status = 'RETURNED' THEN 1 ELSE 0 END AS is_returned
+            FROM demo_user.sales_orders o
+            JOIN demo_user.sales_order_lines ol ON ol.order_id = o.order_id
+            JOIN demo_user.products p  ON p.product_id = ol.product_id
+            JOIN demo_user.customers cust ON cust.customer_id = o.customer_id
+            JOIN demo_user.channels ch ON ch.channel_id = o.channel_id
+            JOIN demo_user.regions r   ON r.region_id = o.region_id
+            JOIN demo_user.countries c ON c.country_id = o.country_id
+           WHERE o.is_deleted = 0
+        ) sc
+    expected: RUNTIME_ERROR
+    notes: >
+      F8 wraps source_query as a derived table, but exec_dashboard's
+      underlying physical tables (sales_orders, products, etc.) don't
+      exist on this sandbox. Expected to surface a 3807 at runtime —
+      the important point is the compiled SQL now HAS the source_query
+      in its FROM (not a bare `FROM sales_cube AS sales_cube`).

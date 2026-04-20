@@ -1,0 +1,62 @@
+category: Role-playing dimension
+description: >
+  Kimball role-playing dimension — a single physical dataset (nation)
+  referenced in multiple roles (supplier's nation vs customer's nation).
+  `RELATIONSHIP.role_name` pins each edge to a role; dims use `role.field`
+  syntax to select one. The compiler prefixes role-played column aliases
+  with the role name so both roles can coexist in one request.
+
+cases:
+  - id: RP01
+    title: Role pin — customer_nation.n_name
+    category: Role-playing dimension
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: customer_nation.n_name
+    expected_sql: |
+      SELECT nation.n_name AS customer_nation_n_name,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+        JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+       GROUP BY nation.n_name
+    expected: PASS
+
+  - id: RP02
+    title: Role pin — supplier_nation.n_name
+    category: Role-playing dimension
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: supplier_nation.n_name
+    expected_sql: |
+      SELECT nation.n_name AS supplier_nation_n_name,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
+        JOIN demo_user.nation   AS nation   ON supplier.s_nationkey = nation.n_nationkey
+       GROUP BY nation.n_name
+    expected: PASS
+
+  - id: RP03
+    title: BOTH roles in one query — nation joined twice with different aliases
+    category: Role-playing dimension
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: customer_nation.n_name,supplier_nation.n_name
+    expected_sql: |
+      SELECT cn.n_name AS customer_nation_n_name,
+             sn.n_name AS supplier_nation_n_name,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+        JOIN demo_user.nation   AS cn       ON customer.c_nationkey = cn.n_nationkey
+        JOIN demo_user.supplier AS supplier ON lineitem.l_suppkey = supplier.s_suppkey
+        JOIN demo_user.nation   AS sn       ON supplier.s_nationkey = sn.n_nationkey
+       GROUP BY cn.n_name, sn.n_name
+    expected: PASS
+    notes: Canonical Kimball role-playing — both roles in one SQL, self-joined nation.

@@ -1,0 +1,82 @@
+# ============================================================================
+# Semantic catalog — admin-only tools
+# ============================================================================
+# Only `semantic_admin` sees these. They mutate the catalog or dump
+# governed content outside the agent's chat surface.
+# ============================================================================
+
+# ---------------------------------------------------------------- sem_import
+
+sem_import:
+  type: tool
+  description: >
+    Create ONE catalog entity from a JSON payload. The `kind` argument
+    selects the entity type; `payload_json` must match the shape
+    documented in sql/60_sp_semantic_import.sql. Foreign keys are
+    resolved by natural key (model + entity name).
+
+    Topological order: MODEL → DATASET → FIELD → METRIC → METRIC_EXPR
+    → RELATIONSHIP → REL_COL → VIEW → VIEW_MEMBER → AI_CONTEXT.
+
+    Payload shapes (JSON objects):
+
+      MODEL        {"name","description","owner_user","owner_group"}
+      DATASET      {"name","description","granularity",
+                    "source_table"|"source_query"}
+      FIELD        {"dataset","name","type":"A|K","expression",
+                    "description","label","is_dimension",
+                    "is_time_dimension","data_type","column_name",
+                    "field_order"}
+      METRIC       {"name","description","primary_dataset",
+                    "metric_type":"SIMPLE|RATIO|CUMULATIVE|DERIVED",
+                    "is_additive","is_certified","owner_team",
+                    "default_time_grain"}
+      METRIC_EXPR  {"metric","dialect":"TERADATA|ANSI_SQL","expression"}
+      RELATIONSHIP {"name","from","to","cardinality","join_type",
+                    "description"}
+      REL_COL      {"relationship","from_dataset","to_dataset",
+                    "from_field","to_field","position"}
+      VIEW         {"name","description","primary_dataset",
+                    "timeseries_field","is_certified","is_public",
+                    "owner_user"}
+      VIEW_MEMBER  {"view","ordinal","name",
+                    "member_type":"DIMENSION|MEASURE|TIME_DIMENSION",
+                    "parent_dataset","field","metric",
+                    "inline_expression","display_name","is_public",
+                    "member_order"}
+      AI_CONTEXT   {"entity_type":"MODEL|DATASET|FIELD|METRIC|VIEW",
+                    "entity_name","parent","instructions",
+                    "synonyms":[..],"examples":[..],"display_name"}
+
+    Returns (status, message, entity_id). On ERROR the catalog is
+    untouched — fix the payload and retry.
+  sql: |
+    CALL {catalog_db}.sp_semantic_import(:model, :kind, :payload_json)
+  parameters:
+    model:
+      description: "Target model name (ignored for kind=MODEL where name is in payload)"
+    kind:
+      description: "Entity kind (see description)"
+    payload_json:
+      description: "JSON payload (single object, shape depends on kind)"
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"
+
+# ---------------------------------------------------------------- sem_export_osi
+
+sem_export_osi:
+  type: tool
+  description: >
+    Export a whole semantic model as Open Semantic Interchange (OSI)
+    version 0.1.1 YAML. Returns (line_no, line_text) — concatenate in
+    order to rebuild the document. Paste the result into an OSI-aware
+    consumer or commit it to a model-definitions repo.
+  sql: |
+    CALL {catalog_db}.sp_export_osi_yaml(:model)
+  parameters:
+    model:
+      description: "Semantic model name to export"
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"

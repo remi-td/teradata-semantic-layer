@@ -1,0 +1,69 @@
+category: Time grain
+description: >
+  Per-grain aggregation of a time dim. Before F7, the request contract had no
+  way to roll up a DATE dim to month/quarter/year. Now the caller appends
+  `:GRAIN` — the compiler wraps the expression with TRUNC and names the
+  alias `fieldname_grainlower`.
+
+cases:
+  - id: TG01
+    title: No grain (day-level, default)
+    category: Time grain
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: orders.o_orderdate,customer.c_mktsegment
+    expected_sql: |
+      SELECT orders.o_orderdate, customer.c_mktsegment,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       GROUP BY orders.o_orderdate, customer.c_mktsegment
+    expected: PASS
+
+  - id: TG02
+    title: Monthly rollup (:MONTH)
+    category: Time grain
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: orders.o_orderdate:MONTH,customer.c_mktsegment
+    expected_sql: |
+      SELECT TRUNC(orders.o_orderdate, 'MM') AS o_orderdate_month,
+             customer.c_mktsegment,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       GROUP BY TRUNC(orders.o_orderdate, 'MM'), customer.c_mktsegment
+    expected: PASS
+
+  - id: TG03
+    title: Yearly rollup (:YEAR)
+    category: Time grain
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: orders.o_orderdate:YEAR
+    expected_sql: |
+      SELECT TRUNC(orders.o_orderdate, 'Y') AS o_orderdate_year,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders AS orders ON lineitem.l_orderkey = orders.o_orderkey
+       GROUP BY TRUNC(orders.o_orderdate, 'Y')
+    expected: PASS
+
+  - id: TG04
+    title: Quarter rollup (:QUARTER)
+    category: Time grain
+    request:
+      model: tpch_orders
+      metrics: count_orders
+      dimensions: orders.o_orderdate:QUARTER
+    expected_sql: |
+      SELECT TRUNC(orders.o_orderdate, 'Q') AS o_orderdate_quarter,
+             COUNT(DISTINCT orders.o_orderkey) AS count_orders
+        FROM demo_user.orders AS orders
+       GROUP BY TRUNC(orders.o_orderdate, 'Q')
+    expected: PASS

@@ -1,0 +1,44 @@
+category: Edge shapes
+description: >
+  Unusual request shapes: metric-only (scalar), dim-only (DISTINCT values),
+  combining dims from one dataset only.
+
+cases:
+  - id: E01
+    title: Metric-only (scalar revenue)
+    category: Edge shapes
+    request:
+      model: tpch_orders
+      metrics: revenue
+    expected_sql: |
+      SELECT SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+    expected: PASS
+
+  - id: E02
+    title: Dimension-only (distinct values of one dim, F3)
+    category: Edge shapes
+    request:
+      model: tpch_orders
+      dimensions: customer.c_mktsegment
+    expected_sql: |
+      SELECT DISTINCT customer.c_mktsegment
+        FROM demo_user.customer AS customer
+    expected: PASS
+    notes: Was F3 — dim-only requests now emit SELECT DISTINCT.
+
+  - id: E03
+    title: Dimension-only with role alias (still DISTINCT)
+    category: Edge shapes
+    request:
+      model: tpch_orders
+      dimensions: supplier_nation.n_name
+    expected_sql: |
+      SELECT DISTINCT nation.n_name AS supplier_nation_n_name
+        FROM demo_user.supplier AS supplier
+        JOIN demo_user.nation   AS nation ON supplier.s_nationkey = nation.n_nationkey
+    expected: PASS
+    notes: >
+      Lists nations that actually have suppliers — useful for building dim
+      filter UIs. Anchor becomes supplier (most-connected required dataset)
+      because there is no metric to give us one.

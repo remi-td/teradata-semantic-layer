@@ -1,0 +1,269 @@
+# ============================================================================
+# Semantic catalog — core agent tools (available to every persona)
+# ============================================================================
+# Four tools cover the whole consumer-facing surface:
+#
+#   sem_list      browse any entity kind in the catalog (UNION-ALL over kinds)
+#   sem_search    fuzzy keyword search across names / synonyms / descriptions
+#   sem_describe  long-form description of one entity (key/value attributes)
+#   sem_answer    compile + execute a semantic request (the main data path)
+#
+# All tools accept an optional `catalog_db` (default: demo_user) so the
+# same config can target a non-default schema.
+# ============================================================================
+
+# ---------------------------------------------------------------- sem_list
+
+sem_list:
+  type: tool
+  description: >
+    Enumerate catalog entities by kind. Use this as the primary
+    directory lookup — one tool covers every level of the hierarchy.
+
+      kind=MODEL          → every active semantic model
+                            (model optional; parent ignored)
+      kind=DATASET        → datasets in a model (TABLE or CUBE)
+                            (model required; parent ignored)
+      kind=FIELD          → fields of a dataset
+                            (model + parent=dataset_name required)
+      kind=METRIC         → metrics with Teradata expression + primary dataset
+                            (model required; parent ignored)
+      kind=VIEW           → semantic views
+                            (model required; parent ignored)
+      kind=VIEW_MEMBER    → dimensions / measures exposed by a view
+                            (model + parent=view_name required)
+      kind=RELATIONSHIP   → dataset-to-dataset joins with cardinality
+                            (model required; parent ignored)
+
+    Returns a uniform schema: (kind, name, parent, sub_kind, description,
+    expression, extra). Columns irrelevant to the selected kind are NULL.
+  sql: |
+    SELECT * FROM (
+      -- MODEL
+      SELECT CAST('MODEL' AS VARCHAR(20))                     AS kind,
+             CAST(m.model_name  AS VARCHAR(200))              AS name,
+             CAST(NULL          AS VARCHAR(200))              AS parent,
+             CAST(NULL          AS VARCHAR(50))               AS sub_kind,
+             CAST(SUBSTRING(COALESCE(m.description,'') FROM 1 FOR 500) AS VARCHAR(500)) AS description,
+             CAST(NULL          AS VARCHAR(4000))             AS expression,
+             CAST(COALESCE(m.owner_user,'') || '/' || COALESCE(m.owner_group,'') AS VARCHAR(200)) AS extra
+        FROM {catalog_db}.SEMANTIC_MODEL m
+       WHERE UPPER(:kind) = 'MODEL' AND m.is_active = 1
+         AND (:model IS NULL OR m.model_name = :model)
+
+      UNION ALL
+      -- DATASET
+      SELECT 'DATASET',
+             CAST(d.dataset_name AS VARCHAR(200)),
+             CAST(m.model_name   AS VARCHAR(200)),
+             CAST(CASE WHEN d.source_query IS NOT NULL THEN 'CUBE' ELSE 'TABLE' END AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(d.description,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(NULL AS VARCHAR(4000)),
+             CAST(COALESCE(TRIM(d.DataBaseName) || '.' || TRIM(d.TableName), '') AS VARCHAR(200))
+        FROM {catalog_db}.DATASET d
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id = d.model_id
+       WHERE UPPER(:kind) = 'DATASET' AND m.model_name = :model
+
+      UNION ALL
+      -- FIELD (requires parent = dataset_name)
+      SELECT 'FIELD',
+             CAST(f.field_name  AS VARCHAR(200)),
+             CAST(d.dataset_name AS VARCHAR(200)),
+             CAST(f.field_type_code AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(f.description,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(SUBSTRING(COALESCE(f.expression,'')  FROM 1 FOR 4000) AS VARCHAR(4000)),
+             CAST('dim=' || TRIM(CAST(COALESCE(f.is_dimension,0) AS VARCHAR(2))) ||
+                  ' time=' || TRIM(CAST(COALESCE(f.is_time_dimension,0) AS VARCHAR(2))) ||
+                  ' dt=' || COALESCE(f.data_type,'') AS VARCHAR(200))
+        FROM {catalog_db}.FIELD f
+        JOIN {catalog_db}.DATASET d        ON d.dataset_id = f.dataset_id
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id   = d.model_id
+       WHERE UPPER(:kind) = 'FIELD' AND m.model_name = :model AND d.dataset_name = :parent
+
+      UNION ALL
+      -- METRIC
+      SELECT 'METRIC',
+             CAST(mt.metric_name AS VARCHAR(200)),
+             CAST(m.model_name   AS VARCHAR(200)),
+             CAST(mt.metric_type AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(mt.description,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(SUBSTRING(COALESCE(me.expression,'')  FROM 1 FOR 4000) AS VARCHAR(4000)),
+             CAST('primary=' || COALESCE(d.dataset_name,'')
+                  || ' cert=' || TRIM(CAST(COALESCE(mt.is_certified,0) AS VARCHAR(2))) AS VARCHAR(200))
+        FROM {catalog_db}.METRIC mt
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id = mt.model_id
+        LEFT JOIN {catalog_db}.DATASET d   ON d.dataset_id = mt.primary_dataset_id
+        LEFT JOIN {catalog_db}.METRIC_EXPRESSION me
+               ON me.metric_id = mt.metric_id AND me.dialect_code = 'TERADATA'
+       WHERE UPPER(:kind) = 'METRIC' AND m.model_name = :model
+
+      UNION ALL
+      -- VIEW
+      SELECT 'VIEW',
+             CAST(v.view_name  AS VARCHAR(200)),
+             CAST(m.model_name AS VARCHAR(200)),
+             CAST(CASE WHEN v.is_certified = 1 THEN 'CERTIFIED' ELSE 'DRAFT' END AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(v.description,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(NULL AS VARCHAR(4000)),
+             CAST('primary=' || COALESCE(d.dataset_name,'')
+                  || ' ts=' || COALESCE(v.timeseries_field,'') AS VARCHAR(200))
+        FROM {catalog_db}.SEMANTIC_VIEW v
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id = v.model_id
+        LEFT JOIN {catalog_db}.DATASET d   ON d.dataset_id = v.primary_dataset_id
+       WHERE UPPER(:kind) = 'VIEW' AND m.model_name = :model
+
+      UNION ALL
+      -- VIEW_MEMBER (requires parent = view_name)
+      SELECT 'VIEW_MEMBER',
+             CAST(vm.member_name  AS VARCHAR(200)),
+             CAST(v.view_name     AS VARCHAR(200)),
+             CAST(vm.member_type  AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(vm.display_name,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(SUBSTRING(COALESCE(vm.inline_expression,'') FROM 1 FOR 4000) AS VARCHAR(4000)),
+             CAST('backed_by=' || COALESCE(f.field_name, mt.metric_name, '') AS VARCHAR(200))
+        FROM {catalog_db}.VIEW_MEMBER vm
+        JOIN {catalog_db}.SEMANTIC_VIEW v  ON v.view_id  = vm.view_id
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id = v.model_id
+        LEFT JOIN {catalog_db}.FIELD  f    ON f.field_id  = vm.field_id
+        LEFT JOIN {catalog_db}.METRIC mt   ON mt.metric_id = vm.metric_id
+       WHERE UPPER(:kind) = 'VIEW_MEMBER' AND m.model_name = :model AND v.view_name = :parent
+
+      UNION ALL
+      -- RELATIONSHIP
+      SELECT 'RELATIONSHIP',
+             CAST(r.relationship_name AS VARCHAR(200)),
+             CAST(m.model_name        AS VARCHAR(200)),
+             CAST(r.cardinality       AS VARCHAR(50)),
+             CAST(SUBSTRING(COALESCE(r.description,'') FROM 1 FOR 500) AS VARCHAR(500)),
+             CAST(NULL AS VARCHAR(4000)),
+             CAST(TRIM(df.dataset_name) || ' -> ' || TRIM(dt.dataset_name)
+                  || ' (' || COALESCE(r.join_type_hint,'INNER') || ')' AS VARCHAR(200))
+        FROM {catalog_db}.RELATIONSHIP  r
+        JOIN {catalog_db}.DATASET       df ON df.dataset_id = r.from_dataset_id
+        JOIN {catalog_db}.DATASET       dt ON dt.dataset_id = r.to_dataset_id
+        JOIN {catalog_db}.SEMANTIC_MODEL m ON m.model_id    = df.model_id
+       WHERE UPPER(:kind) = 'RELATIONSHIP' AND m.model_name = :model
+    ) x
+    ORDER BY x.kind, x.name
+  parameters:
+    kind:
+      description: "Entity kind: MODEL | DATASET | FIELD | METRIC | VIEW | VIEW_MEMBER | RELATIONSHIP"
+    model:
+      description: "Semantic model name. Required for all kinds except MODEL."
+      default: null
+    parent:
+      description: "Parent entity name. Required for FIELD (=dataset_name) and VIEW_MEMBER (=view_name); ignored otherwise."
+      default: null
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"
+
+# ---------------------------------------------------------------- sem_search
+
+sem_search:
+  type: tool
+  description: >
+    Fuzzy keyword search across the whole catalog: dataset, field, metric
+    and view names plus AI-context synonyms, display names and
+    descriptions. Returns ranked hits as (entity_type, entity_name,
+    parent_name, description, synonyms, relevance). Use before sem_list
+    when you have a business term but don't know which model it lives in.
+  sql: |
+    EXEC {catalog_db}.m_semantic_search(:term, :model)
+  parameters:
+    term:
+      description: "Keyword or phrase (matched case-insensitively)"
+    model:
+      description: "Optional: restrict to a single semantic model"
+      default: null
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"
+
+# ---------------------------------------------------------------- sem_describe
+
+sem_describe:
+  type: tool
+  description: >
+    Return the full description pack for one catalog entity as a pivoted
+    (attr_ordinal, attr_key, attr_value) list. Includes description,
+    ai_context (instructions / synonyms / examples), fields (for
+    datasets), dialect-specific expressions (for metrics), members
+    (for views) and relationships touching the entity. This is the
+    deepest discovery tool — always read it before composing sem_answer.
+  sql: |
+    EXEC {catalog_db}.m_semantic_describe(:entity_type, :entity_name, :model)
+  parameters:
+    entity_type:
+      description: "MODEL | DATASET | FIELD | METRIC | VIEW"
+    entity_name:
+      description: "Entity name"
+    model:
+      description: "Optional: disambiguate when entity name is shared across models"
+      default: null
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"
+
+# ---------------------------------------------------------------- sem_answer
+
+sem_answer:
+  type: tool
+  description: >
+    Compile a semantic request and — unless dry_run=1 — execute it,
+    returning the answer rows directly. This is the everyday data path.
+
+    Parameters are flat strings that the compiler parses:
+
+      metrics          comma-separated names, e.g. "revenue,count_orders"
+      dimensions       comma-separated "dataset.field[:GRAIN]" tokens.
+                       GRAIN ∈ DAY | WEEK | MONTH | QUARTER | YEAR.
+                       Prefix may alternatively be a RELATIONSHIP.role_name.
+      where_filters    "field|op|value;..." pre-aggregation.
+                       op ∈ = <> < <= > >= LIKE IN.
+                       String values must be pre-quoted: |='AUTOMOBILE'
+                       IN values must be parenthesised: |IN|('O','F')
+      having_filters   "metric|op|value;..." post-aggregation.
+      sort             "name DIR,name DIR"  DIR ∈ ASC | DESC
+      row_limit        integer; 0 = no TOP.
+      dry_run          0 (default) executes; 1 returns only the compiled
+                       SQL + plan (status, message, compiled_sql,
+                       anchor_dataset, joined_datasets) for inspection.
+
+    The compiler auto-joins datasets using the RELATIONSHIP graph — you
+    never write JOIN yourself. On compile failure, a single row is
+    returned with status='ERROR' and the reason, regardless of dry_run.
+  sql: |
+    CALL {catalog_db}.sp_semantic_answer(
+      :model, :metrics, :dimensions,
+      :where_filters, :having_filters, :sort, :row_limit, :dry_run
+    )
+  parameters:
+    model:
+      description: "Semantic model name"
+    metrics:
+      description: "Comma-separated metric names (may be empty for dim-only requests)"
+      default: ""
+    dimensions:
+      description: "Comma-separated dimension tokens: dataset.field[:GRAIN]"
+      default: ""
+    where_filters:
+      description: "Pre-aggregation filters; field|op|value;... (strings quoted, IN parenthesised)"
+      default: ""
+    having_filters:
+      description: "Post-aggregation filters on metrics; metric|op|value;..."
+      default: ""
+    sort:
+      description: "ORDER BY expressions, e.g. 'revenue DESC,d_year ASC'"
+      default: ""
+    row_limit:
+      description: "TOP N rows; 0 for no limit"
+      default: 0
+      type_hint: "int"
+    dry_run:
+      description: "1 = return compiled SQL and plan only; 0 = execute"
+      default: 0
+      type_hint: "int"
+    catalog_db:
+      description: "Catalog schema (default: demo_user)"
+      default: "demo_user"

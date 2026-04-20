@@ -1,0 +1,46 @@
+# ============================================================================
+# Profiles for the Teradata Semantic Layer MCP server
+# ============================================================================
+# Three personas:
+#
+#   semantic_admin    Catalog steward. Full authoring (sem_import),
+#                     export (sem_export_*), plus free-form SQL via
+#                     base_* / dba_* / sec_* / qlty_*.
+#
+#   semantic_analyst  Power analyst / data scientist. Uses the semantic
+#                     layer for governed answers AND has free-form
+#                     read-only access to the DB via base_*
+#                     (writeQuery / dynamicQuery are excluded).
+#
+#   semantic_guided   Locked-down "chat with your metrics" agent.
+#                     ONLY the four core sem_* tools. No free-form SQL,
+#                     no export, no authoring.
+# ============================================================================
+
+semantic_admin:
+  tool:
+    - ^sem_.*                    # all sem_* tools (core + admin)
+    - ^base_.*                   # free-form read + write SQL
+    - ^dba_.*                    # platform admin helpers
+    - ^sec_.*                    # security / permissions
+    - ^qlty_.*                   # data quality / profiling
+  prompt:
+    - ^sem_.*
+    - ^dba_.*
+
+semantic_analyst:
+  tool:
+    # Core four only — admin tools (sem_import, sem_export_*) are EXCLUDED.
+    - ^sem_(list|search|describe|answer)$
+    - "^base_(?!(writeQuery|dynamicQuery)$).*"      # base_* except free-form writes
+    - ^qlty_.*                                      # profiling
+    - ^sec_userDbPermissions$                       # inspect own grants
+  prompt:
+    - ^sem_(discovery|query|analyst).*
+
+semantic_guided:
+  tool:
+    # Core four only. No base_*, no dba_*, no export, no authoring.
+    - ^sem_(list|search|describe|answer)$
+  prompt:
+    - ^sem_(discovery|query|guided).*

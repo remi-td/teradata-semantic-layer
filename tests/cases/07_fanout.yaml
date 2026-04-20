@@ -1,0 +1,22 @@
+category: Fan-out risk
+description: >
+  When a dim is at a finer grain than the metric's natural grain, the metric
+  can fan-out and double-count. COUNT DISTINCT is the standard defense.
+
+cases:
+  - id: FO01
+    title: count_orders grouped at lineitem grain (DISTINCT survives fan-out)
+    category: Fan-out
+    request:
+      model: tpch_orders
+      metrics: count_orders
+      dimensions: customer.c_mktsegment,orders.o_orderpriority,lineitem.l_returnflag
+    expected_sql: |
+      SELECT customer.c_mktsegment, orders.o_orderpriority, lineitem.l_returnflag,
+             COUNT(DISTINCT orders.o_orderkey) AS count_orders
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       GROUP BY customer.c_mktsegment, orders.o_orderpriority, lineitem.l_returnflag
+    expected: PASS
+    notes: count_orders = COUNT(DISTINCT orders.o_orderkey) — order count is preserved.

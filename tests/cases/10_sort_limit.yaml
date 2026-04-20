@@ -1,0 +1,22 @@
+category: Sort / limit
+description: ORDER BY and TOP N on the compiled output.
+
+cases:
+  - id: SL01
+    title: Top-5 customers by revenue (ORDER BY alias + TOP)
+    category: Sort / limit
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: customer.c_name,customer.c_mktsegment,orders.o_orderpriority
+      sort: "revenue DESC"
+      limit: 5
+    expected_sql: |
+      SELECT TOP 5 customer.c_name, customer.c_mktsegment, orders.o_orderpriority,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       GROUP BY customer.c_name, customer.c_mktsegment, orders.o_orderpriority
+       ORDER BY revenue DESC
+    expected: PASS

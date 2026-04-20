@@ -1,0 +1,74 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "semantic-catalog"
+version = "0.1.0"
+description = "Teradata-native semantic catalog and metadata layer for agents and BI tools"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Remi Turpaud", email = "remi.turpaud@teradata.com" }
+]
+keywords = ["teradata", "semantic-layer", "metrics", "metadata", "data-catalog"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "License :: OSI Approved :: Apache Software License",
+    "Topic :: Database",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "teradatasql>=20.0",
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.23",
+    "httpx>=0.27",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+semantic-catalog = "semantic_catalog.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/remi-td/semantic-catalog"
+Documentation = "https://github.com/remi-td/semantic-catalog#readme"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+semantic_catalog = [
+    "static/*",
+    "static/assets/*",
+    "sql_bundle/*.sql",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-ra"
+markers = [
+    "live: tests that require a reachable Teradata instance (DATABASE_URI set)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"

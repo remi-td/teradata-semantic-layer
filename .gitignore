@@ -1,0 +1,86 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg
+*.egg-info/
+.eggs/
+wheels/
+pip-wheel-metadata/
+MANIFEST
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# PEP 582
+__pypackages__/
+
+# ---------- Virtualenvs ----------
+.env
+.venv/
+venv/
+env/
+ENV/
+
+# ---------- Testing / coverage ----------
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.cache/
+nosetests.xml
+
+# ---------- Type checkers / linters ----------
+.mypy_cache/
+.pytype/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+
+# ---------- IDE / editor ----------
+.idea/
+.vscode/
+*.swp
+*.swo
+*.sublime-workspace
+*.sublime-project
+
+# ---------- OS ----------
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# ---------- Project-specific ----------
+# Local overrides / secrets
+.env.local
+*.env.local
+secrets.json
+
+# Claude local settings (kept: skills/, settings shared with the repo)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
+
+# Generated test artefacts
+tests/.pytest_cache/
+TEST_REPORT.local.md
+
+# Uvicorn / server logs
+*.log
+nohup.out
+
+# Bundled SQL is re-copied from sql/ at build time; keep the source of
+# truth in ./sql and ignore the in-package mirror. (Comment out if you
+# prefer the mirror to live in git too.)
+# src/semantic_catalog/sql_bundle/

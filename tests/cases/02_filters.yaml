@@ -1,0 +1,95 @@
+category: Filters
+description: >
+  WHERE / HAVING filter hygiene: date literals, LIKE, IN lists (including the
+  old F1 double-parens bug), filter on an unrelated dataset (F2 — formerly
+  silent cross-join), and caller quoting errors.
+
+cases:
+  - id: F01
+    title: Date filter with DATE literal
+    category: Filters
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: orders.o_orderpriority,customer.c_mktsegment
+      where: "lineitem.l_shipdate|>=|DATE '1995-01-01'"
+    expected_sql: |
+      SELECT orders.o_orderpriority, customer.c_mktsegment,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       WHERE lineitem.l_shipdate >= DATE '1995-01-01'
+       GROUP BY orders.o_orderpriority, customer.c_mktsegment
+    expected: PASS
+
+  - id: F02
+    title: LIKE filter (priority starts with 1-)
+    category: Filters
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: orders.o_orderpriority,customer.c_mktsegment
+      where: "orders.o_orderpriority|LIKE|'1-%'"
+    expected_sql: |
+      SELECT orders.o_orderpriority, customer.c_mktsegment,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       WHERE orders.o_orderpriority LIKE '1-%'
+       GROUP BY orders.o_orderpriority, customer.c_mktsegment
+    expected: PASS
+
+  - id: F03
+    title: IN list (post-F1 — caller supplies parens, compiler does not wrap)
+    category: Filters
+    request:
+      model: tpch_orders
+      metrics: count_orders
+      dimensions: customer.c_mktsegment,orders.o_orderstatus
+      where: "orders.o_orderstatus|IN|('O','F')"
+    expected_sql: |
+      SELECT customer.c_mktsegment, orders.o_orderstatus,
+             COUNT(DISTINCT orders.o_orderkey) AS count_orders
+        FROM demo_user.orders AS orders
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+       WHERE orders.o_orderstatus IN ('O','F')
+       GROUP BY customer.c_mktsegment, orders.o_orderstatus
+    expected: PASS
+    notes: Was F1 compiler bug — now fixed.
+
+  - id: F04
+    title: Filter on region.r_name with region not in dims (F2 auto-include)
+    category: Filters
+    request:
+      model: tpch_orders
+      metrics: revenue
+      dimensions: customer.c_mktsegment,orders.o_orderpriority
+      where: "region.r_name|=|'AMERICA'"
+    expected_sql: |
+      SELECT customer.c_mktsegment, orders.o_orderpriority,
+             SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
+        FROM demo_user.lineitem AS lineitem
+        JOIN demo_user.orders   AS orders   ON lineitem.l_orderkey = orders.o_orderkey
+        JOIN demo_user.customer AS customer ON orders.o_custkey = customer.c_custkey
+        JOIN demo_user.nation   AS nation   ON customer.c_nationkey = nation.n_nationkey
+        JOIN demo_user.region   AS region   ON nation.n_regionkey = region.r_regionkey
+       WHERE region.r_name = 'AMERICA'
+       GROUP BY customer.c_mktsegment, orders.o_orderpriority
+    expected: PASS
+    notes: Was F2 compiler bug — region dataset is now auto-included from the WHERE.
+
+  - id: F05
+    title: Unquoted string value (caller error — must still fail cleanly)
+    category: Filters
+    request:
+      model: tpch_orders
+      metrics: count_orders
+      dimensions: orders.o_orderstatus
+      where: "orders.o_orderstatus|=|O"
+    expected: RUNTIME_ERROR
+    notes: >
+      This is a caller error — `O` is interpreted by Teradata as a column
+      reference. Protocol requires string pre-quoting. We keep the test to
+      document the failure mode.

@@ -1,0 +1,23 @@
+category: Chasm trap
+description: >
+  Two metrics at different grains (lineitem vs partsupp) joined through a
+  shared dimension (part). This cannot be correctly expressed in a single
+  GROUP BY without double-counting. The catalog emits the metrics in a single
+  query but flips `is_valid = 0` with a CHASM_WARNING so the caller knows
+  to split the request into two per-grain queries.
+
+cases:
+  - id: C01
+    title: revenue + total_availqty by part — compiler flags CHASM_WARNING
+    category: Chasm trap
+    request:
+      model: tpch_orders
+      metrics: revenue,total_availqty
+      dimensions: part.p_name
+    expected: COMPILE_REJECTED
+    notes: >
+      is_valid=0 with validation_message beginning 'CHASM_WARNING'.
+      The short-term contract is: refuse the request; caller splits into
+      two separate per-grain requests (partsupp.p_name + lineitem.p_name)
+      and joins the results client-side. A proper symmetric-aggregate
+      sub-SELECT plan is deferred.

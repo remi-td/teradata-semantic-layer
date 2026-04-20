@@ -61,8 +61,6 @@ BEGIN
     DECLARE v_tok         VARCHAR(500);
     DECLARE v_tok2        VARCHAR(4000);
     DECLARE v_i           INTEGER;
-    DECLARE v_dot         INTEGER;
-    DECLARE v_colon       INTEGER;
 
     DECLARE v_prefix      VARCHAR(200);
     DECLARE v_fld_name    VARCHAR(200);
@@ -185,25 +183,14 @@ BEGIN
     SET v_i = 1;
     SET v_tok = CASE WHEN COALESCE(p_dimensions,'')='' THEN NULL ELSE TRIM(STRTOK(p_dimensions, ',', v_i)) END;
     WHILE v_tok IS NOT NULL DO
-        -- Split grain suffix
-        SET v_colon = POSITION(':' IN v_tok);
-        IF v_colon > 0 THEN
-            SET v_grain = UPPER(TRIM(SUBSTRING(v_tok FROM v_colon + 1)));
-            SET v_tok2  = TRIM(SUBSTRING(v_tok FROM 1 FOR v_colon - 1));
-        ELSE
-            SET v_grain = NULL;
-            SET v_tok2  = v_tok;
-        END IF;
-
-        -- Split prefix.field
-        SET v_dot = POSITION('.' IN v_tok2);
-        IF v_dot > 0 THEN
-            SET v_prefix   = TRIM(SUBSTRING(v_tok2 FROM 1 FOR v_dot - 1));
-            SET v_fld_name = TRIM(SUBSTRING(v_tok2 FROM v_dot + 1));
-        ELSE
-            SET v_prefix   = NULL;
-            SET v_fld_name = v_tok2;
-        END IF;
+        -- Split `token:GRAIN` then `prefix.field` in one pass via REGEXP.
+        -- Patterns: '^[^:]+' = pre-colon; '(?<=:).+$' = post-colon (NULL if none).
+        --           '^[^.]+(?=\.)' = pre-dot (NULL if none);
+        --           '(?<=\.).+$'  = post-first-dot (NULL if none, fall back to input).
+        SET v_tok2     = TRIM(REGEXP_SUBSTR(v_tok, '^[^:]+', 1, 1));
+        SET v_grain    = UPPER(TRIM(REGEXP_SUBSTR(v_tok, '(?<=:).+$', 1, 1)));
+        SET v_prefix   = TRIM(REGEXP_SUBSTR(v_tok2, '^[^.]+(?=\.)', 1, 1));
+        SET v_fld_name = COALESCE(TRIM(REGEXP_SUBSTR(v_tok2, '(?<=\.).+$', 1, 1)), v_tok2);
 
         -- Try to resolve prefix as a role_name first
         SET v_role_edge = NULL;
@@ -349,15 +336,10 @@ BEGIN
         SET v_val    = CASE WHEN COALESCE(v_tok,'')='' THEN NULL ELSE TRIM(STRTOK(v_tok, '|', 3)) END;
 
         IF v_prefix IS NOT NULL AND v_op IS NOT NULL AND v_val IS NOT NULL THEN
-            -- Split prefix.field
-            SET v_dot = POSITION('.' IN v_prefix);
-            IF v_dot > 0 THEN
-                SET v_tok2 = TRIM(SUBSTRING(v_prefix FROM 1 FOR v_dot - 1));
-                SET v_fld_name = TRIM(SUBSTRING(v_prefix FROM v_dot + 1));
-            ELSE
-                SET v_tok2 = NULL;
-                SET v_fld_name = v_prefix;
-            END IF;
+            -- Split prefix into (dataset/role, field) on the first dot. See
+            -- dimension parser above for the pattern explanation.
+            SET v_tok2     = TRIM(REGEXP_SUBSTR(v_prefix, '^[^.]+(?=\.)', 1, 1));
+            SET v_fld_name = COALESCE(TRIM(REGEXP_SUBSTR(v_prefix, '(?<=\.).+$', 1, 1)), v_prefix);
 
             -- Try role
             SET v_role_edge = NULL;

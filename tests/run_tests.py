@@ -56,6 +56,7 @@ import teradatasql
 HOST = os.environ.get("TERADATA_HOST", "mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com")
 USER = os.environ.get("TERADATA_USER", "demo_user")
 PASS = os.environ.get("TERADATA_PASSWORD", "demo_user")
+CATALOG_DB = os.environ.get("CATALOG_DB", "demo_user")
 CASES_DIR = Path(__file__).resolve().parent / "cases"
 DEFAULT_REPORT = Path(__file__).resolve().parent.parent / "TEST_RESULTS.md"
 
@@ -131,7 +132,7 @@ def rows_equal(cols_a, a, cols_b, b):
 
 def call_compile(cur, req):
     cur.execute(
-        "CALL demo_user.sp_semantic_request(?,?,?,?,?,?,?,?,?,?,?,?)",
+        f"CALL {CATALOG_DB}.sp_semantic_request(?,?,?,?,?,?,?,?,?,?,?,?)",
         (
             req.get("model", ""),
             req.get("metrics", ""),

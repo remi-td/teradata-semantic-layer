@@ -8,7 +8,42 @@ from __future__ import annotations
 
 import pytest
 
-from semantic_catalog.api.importer import _ordered_items, _norm_bool, _payload_for
+from semantic_catalog.importer.parser import (
+    ordered_items as _ordered_items_impl,
+    _norm_bool,
+    _payload_for,
+)
+
+
+def _ordered_items(model, text, items):
+    """Shim matching the pre-refactor signature used by these tests.
+
+    Accepts both Pydantic ImportItem instances and raw dicts for the
+    ``items`` argument, mirroring the endpoint's own tolerance.
+    """
+    if items:
+        out = []
+        for it in items:
+            if hasattr(it, "kind"):
+                kind, payload = it.kind, it.payload
+            else:
+                kind, payload = it["kind"], it["payload"]
+            out.append((kind.upper(), _payload_for(kind, payload)))
+        return out
+    if not text:
+        return []
+    import yaml as _yaml
+    try:
+        doc = _yaml.safe_load(text)
+    except _yaml.YAMLError as e:
+        from fastapi import HTTPException
+        raise HTTPException(400, f"Could not parse YAML/JSON: {e}")
+    if doc is None:
+        return []
+    if not isinstance(doc, dict):
+        from fastapi import HTTPException
+        raise HTTPException(400, "Import payload must be a mapping at the top level")
+    return _ordered_items_impl(doc)
 
 
 def test_norm_bool_accepts_common_forms():

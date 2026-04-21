@@ -105,7 +105,7 @@ ai_context:
     entity_name: m1
     synonyms: [a]
 """
-    r = client_fake.post("/api/import", json={
+    r = client_fake.post("/api/import?legacy=true", json={
         "model": "m", "text": text, "dry_run": False,
     })
     assert r.status_code == 200, r.text
@@ -124,7 +124,7 @@ def test_dry_run_rolls_back_even_on_success(client_fake, import_pool):
     pool = _apply_client(client_fake, import_pool, [
         ("m","METRIC","{}","OK","ok", 1),
     ])
-    r = client_fake.post("/api/import", json={
+    r = client_fake.post("/api/import?legacy=true", json={
         "model": "m",
         "text": "metrics:\n  - name: x\n    primary_dataset: y\n    expressions: {TERADATA: '1'}\n",
         "dry_run": True,
@@ -147,7 +147,7 @@ datasets:
       - name: bad
         dataset: missing    # triggers the scripted error
 """
-    r = client_fake.post("/api/import", json={
+    r = client_fake.post("/api/import?legacy=true", json={
         "model": "m", "text": text, "dry_run": False,
     })
     body = r.json()

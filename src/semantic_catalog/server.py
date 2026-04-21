@@ -24,6 +24,7 @@ from .api.export import router as export_router
 from .api.importer import router as import_router
 from .api.query import router as query_router
 from .config import load_settings
+from .mcp import router as mcp_router
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +55,7 @@ def create_app() -> FastAPI:
     app.include_router(query_router)
     app.include_router(import_router)
     app.include_router(export_router)
+    app.include_router(mcp_router)
 
     # Health / info.
     @app.get("/api/health")

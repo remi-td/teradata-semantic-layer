@@ -41,6 +41,15 @@ from .logical import (
     SortKey,
 )
 from .render import render
+from .resolver import Resolver
+from .inmem_catalog import InMemoryCatalog
+from .catalog import (
+    CatalogDAO,
+    MetricRow,
+    MetricFilterRow,
+    RelationshipRow,
+    RelColumnRow,
+)
 
 __all__ = [
     "CompileError",
@@ -59,4 +68,11 @@ __all__ = [
     "LogicalPlan",
     "SortKey",
     "render",
+    "Resolver",
+    "CatalogDAO",
+    "InMemoryCatalog",
+    "MetricRow",
+    "MetricFilterRow",
+    "RelationshipRow",
+    "RelColumnRow",
 ]

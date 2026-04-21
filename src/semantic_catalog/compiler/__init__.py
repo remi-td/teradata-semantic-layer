@@ -45,6 +45,7 @@ from .resolver import Resolver
 from .joins import JoinResolver
 from .orchestrator import compile
 from .inmem_catalog import InMemoryCatalog
+from .db_catalog import DbCatalog
 from .catalog import (
     CatalogDAO,
     MetricRow,
@@ -75,6 +76,7 @@ __all__ = [
     "JoinResolver",
     "CatalogDAO",
     "InMemoryCatalog",
+    "DbCatalog",
     "MetricRow",
     "MetricFilterRow",
     "RelationshipRow",

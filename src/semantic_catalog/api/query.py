@@ -1,19 +1,29 @@
 """Query builder + execution endpoints.
 
-Wraps ``demo_user.sp_semantic_request`` and the ``request_result`` staging
-table, then optionally runs the compiled SQL and returns rows. EXPLAIN is
-exposed separately for dry-plan inspection.
+Two compile engines are available:
+
+* ``engine=python`` (default from v0.3) — the pure-Python compiler in
+  ``semantic_catalog.compiler``. Uses sqlglot for dialect rendering,
+  does resolution + joins + metric-in-metric composition in-process,
+  then executes against Teradata via the pooled teradatasql cursor.
+
+* ``engine=sql`` — the legacy ``sp_semantic_request`` stored procedure.
+  Retained for one release (v0.3) for parity testing and rollback;
+  **scheduled for removal in v0.4.** A deprecation header is attached
+  when this path is taken.
 """
 from __future__ import annotations
 
 import logging
 from decimal import Decimal
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 
 from ..db import get_pool
+from ..compiler import DbCatalog, compile as py_compile, render
+from ..compiler.errors import CompileError
 from .models import (
     ExplainRequest,
     ExplainResponse,
@@ -27,7 +37,10 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/query", tags=["query"])
 
 
-# --------------------------------------------------------- value encoding
+Engine = Literal["python", "sql"]
+
+
+# ---- legacy SP path: value encoding for the packed-string params ----
 
 def _quote_string(s: str) -> str:
     return "'" + str(s).replace("'", "''") + "'"
@@ -60,9 +73,12 @@ def _pack_where(filters: List[QueryFilter]) -> str:
         if f.field is None:
             raise HTTPException(400, "where filter missing 'field'")
         if f.op.upper() == "IN":
-            if not f.values:
+            if f.type and f.type.upper() == "RAW" and f.value is not None:
+                rhs = str(f.value)
+            elif f.values:
+                rhs = _encode_in(f.values)
+            else:
                 raise HTTPException(400, f"IN filter on {f.field!r} missing 'values'")
-            rhs = _encode_in(f.values)
         else:
             rhs = _encode_value(f.value, f.type)
         parts.append(f"{f.field}|{f.op}|{rhs}")
@@ -83,10 +99,9 @@ def _pack_sort(items) -> str:
     return ",".join(f"{s.field} {s.direction.upper()}" for s in items)
 
 
-# -------------------------------------------------------------- normalisation
+# ---- result normalisation ----
 
 def _normalise(v: Any) -> Any:
-    """Convert Teradata scalar types to JSON-friendly values."""
     if v is None:
         return None
     if isinstance(v, Decimal):
@@ -103,24 +118,99 @@ def _normalise(v: Any) -> Any:
     return v
 
 
-# ------------------------------------------------------------ endpoints
-
 def _db_name() -> str:
     from ..config import load_settings
     return load_settings().catalog_db
 
 
+# ---- endpoints ----
+
 @router.post("/compile", response_model=QueryResponse)
-def compile_query(req: QueryRequest):
-    return _compile_and_maybe_execute(req, execute=False)
+def compile_query(req: QueryRequest, engine: Engine = Query("python")):
+    return _compile_and_maybe_execute(req, execute=False, engine=engine)
 
 
 @router.post("/execute", response_model=QueryResponse)
-def execute_query(req: QueryRequest):
-    return _compile_and_maybe_execute(req, execute=True)
+def execute_query(req: QueryRequest, engine: Engine = Query("python")):
+    return _compile_and_maybe_execute(req, execute=True, engine=engine)
 
 
-def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResponse:
+def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool,
+                               engine: Engine) -> QueryResponse:
+    if engine == "python":
+        return _compile_python(req, execute=execute)
+    return _compile_sql(req, execute=execute)
+
+
+def _compile_python(req: QueryRequest, *, execute: bool) -> QueryResponse:
+    """Default engine — Python compiler over DbCatalog."""
+    db = _db_name()
+    compile_sql: Optional[str] = None
+    is_valid: Optional[int] = None
+    validation_msg: Optional[str] = None
+    anchor: Optional[str] = None
+    joined: Optional[str] = None
+    execution: Optional[QueryExecution] = None
+
+    with get_pool().cursor() as cur:
+        catalog = DbCatalog(cur, catalog_db=db)
+        try:
+            plan = py_compile(req, catalog)
+        except CompileError as e:
+            return QueryResponse(
+                compiled_sql=None, is_valid=0,
+                validation_message=f"{e.code}: {e.message}",
+                anchor_dataset=None, joined_datasets=None, execution=None,
+            )
+
+        compile_sql = render(plan)
+        anchor = plan.anchor.dataset_name if plan.anchor else None
+        joined = ", ".join(plan.joined_datasets) if plan.joined_datasets else None
+        validation_msg = plan.chasm_warning or None
+
+        # Plan-level validity: if something is unresolved or chasm warns,
+        # mark invalid so the caller is forced to acknowledge.
+        if plan.unresolved:
+            validation_msg = (
+                f"Could not resolve join path for datasets: "
+                f"{', '.join(plan.unresolved)}"
+            )
+            is_valid = 0
+        elif plan.chasm_warning:
+            is_valid = 0
+        else:
+            is_valid = 1
+
+        if execute and compile_sql and is_valid == 1:
+            try:
+                cur.execute(compile_sql)
+                cols = [d[0] for d in (cur.description or [])]
+                all_rows = cur.fetchall() or []
+                cap = 500
+                trunc = len(all_rows) > cap
+                rows = [[_normalise(v) for v in row] for row in all_rows[:cap]]
+                execution = QueryExecution(
+                    columns=cols, rows=rows, row_count=len(all_rows), truncated=trunc,
+                )
+            except Exception as e:  # noqa: BLE001
+                validation_msg = f"{validation_msg or ''} | EXECUTE_ERROR: {e}".strip(" |")
+                is_valid = 0
+
+    return QueryResponse(
+        compiled_sql=compile_sql,
+        is_valid=is_valid,
+        validation_message=validation_msg,
+        anchor_dataset=anchor,
+        joined_datasets=joined,
+        execution=execution,
+    )
+
+
+def _compile_sql(req: QueryRequest, *, execute: bool) -> QueryResponse:
+    """Legacy engine — sp_semantic_request stored procedure.
+
+    DEPRECATED: scheduled for removal in v0.4. Use engine=python (default).
+    """
     db = _db_name()
     p_metrics = ",".join(req.metrics)
     p_dims    = ",".join(req.dimensions)
@@ -131,14 +221,12 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResp
 
     compile_sql = None
     is_valid = None
-    validation_msg = None
+    validation_msg: Optional[str] = "[DEPRECATED engine=sql; use engine=python]"
     anchor = None
     joined = None
     execution: Optional[QueryExecution] = None
 
     with get_pool().cursor() as cur:
-        # CALL with OUT params returns a single-row result set containing
-        # just the OUT values (not the IN echoes).
         cur.execute(
             f"CALL {db}.sp_semantic_request(?,?,?,?,?,?,?,?,?,?,?,?)",
             (
@@ -150,7 +238,8 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResp
         if r:
             compile_sql    = r[0]
             is_valid       = int(r[1]) if r[1] is not None else None
-            validation_msg = r[2]
+            extra          = r[2] or ""
+            validation_msg = (validation_msg + (" | " + extra if extra else "")).strip(" |")
             anchor         = (str(r[3]).strip() if r[3] else None)
             joined         = (str(r[4]) if r[4] else None)
 
@@ -163,9 +252,9 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResp
                 trunc = len(all_rows) > cap
                 rows = [[_normalise(v) for v in row] for row in all_rows[:cap]]
                 execution = QueryExecution(
-                    columns=cols, rows=rows, row_count=len(all_rows), truncated=trunc
+                    columns=cols, rows=rows, row_count=len(all_rows), truncated=trunc,
                 )
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 validation_msg = f"{validation_msg or ''} | EXECUTE_ERROR: {e}".strip(" |")
                 is_valid = 0
 
@@ -181,7 +270,6 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResp
 
 @router.post("/explain", response_model=ExplainResponse)
 def explain(req: ExplainRequest):
-    """Run EXPLAIN on arbitrary SQL and return the plan text."""
     sql = (req.sql or "").strip().rstrip(";")
     if not sql:
         raise HTTPException(400, "sql is required")

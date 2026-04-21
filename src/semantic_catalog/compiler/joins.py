@@ -250,9 +250,13 @@ class JoinResolver:
             nbrs = adj.get(ds.dataset_id, set())
             if not (nbrs & in_plan_ids):
                 continue
+            # Matches sp_semantic_request: bridges can step toward the
+            # out-of-plan frontier even when they are not directly
+            # adjacent to any out-of-plan required. Prefer those that
+            # *are* adjacent (higher out_count); fall back to any
+            # frontier-adjacent dataset so multi-hop chains resolve in
+            # multiple outer iterations.
             out_count = len(nbrs & out_plan_ids)
-            if out_count == 0:
-                continue
             if out_count > best_out_count or (out_count == best_out_count
                                               and (best_bridge is None
                                                    or ds.dataset_id < best_bridge)):

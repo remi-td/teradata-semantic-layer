@@ -53,6 +53,14 @@ from pathlib import Path
 import yaml
 import teradatasql
 
+# Ensure src/ is importable so we can exercise the Python compiler.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(_REPO_ROOT / "src"))
+
+from semantic_catalog.api.models import QueryFilter, QueryRequest, QuerySort  # noqa: E402
+from semantic_catalog.compiler import DbCatalog, compile as py_compile, render  # noqa: E402
+from semantic_catalog.compiler.errors import CompileError  # noqa: E402
+
 HOST = os.environ.get("TERADATA_HOST", "mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com")
 USER = os.environ.get("TERADATA_USER", "demo_user")
 PASS = os.environ.get("TERADATA_PASSWORD", "demo_user")
@@ -131,6 +139,7 @@ def rows_equal(cols_a, a, cols_b, b):
 # ---------------------------------------------------------------- DB ops
 
 def call_compile(cur, req):
+    """Legacy SP compile — calls demo_user.sp_semantic_request."""
     cur.execute(
         f"CALL {CATALOG_DB}.sp_semantic_request(?,?,?,?,?,?,?,?,?,?,?,?)",
         (
@@ -150,6 +159,102 @@ def call_compile(cur, req):
                     anchor=None, joined=None)
     return dict(sql=r[0], is_valid=int(r[1]) if r[1] is not None else None,
                 message=r[2], anchor=r[3], joined=r[4])
+
+
+# ------- Python compiler path ----------------------------------------
+
+def _parse_where_str(s: str) -> list:
+    out = []
+    for part in (s or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split("|")
+        if len(bits) != 3:
+            continue
+        field, op, rhs = bits[0].strip(), bits[1].strip(), bits[2].strip()
+        out.append(QueryFilter(field=field, op=op, value=rhs, type="RAW"))
+    return out
+
+
+def _parse_having_str(s: str) -> list:
+    out = []
+    for part in (s or "").split(";"):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split("|")
+        if len(bits) != 3:
+            continue
+        metric, op, rhs = bits[0].strip(), bits[1].strip(), bits[2].strip()
+        out.append(QueryFilter(metric=metric, op=op, value=rhs, type="RAW"))
+    return out
+
+
+def _parse_sort_str(s: str) -> list:
+    out = []
+    for part in (s or "").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        bits = part.split(None, 1)
+        if len(bits) == 1:
+            out.append(QuerySort(field=bits[0], direction="ASC"))
+        else:
+            out.append(QuerySort(field=bits[0], direction=bits[1].upper()))
+    return out
+
+
+def _request_from_yaml(req: dict) -> QueryRequest:
+    """Convert the YAML SP-packed request into a Pydantic QueryRequest."""
+    return QueryRequest(
+        model=req.get("model", ""),
+        metrics=[m.strip() for m in str(req.get("metrics", "") or "").split(",") if m.strip()],
+        dimensions=[d.strip() for d in str(req.get("dimensions", "") or "").split(",") if d.strip()],
+        where=_parse_where_str(str(req.get("where", "") or "")),
+        having=_parse_having_str(str(req.get("having", "") or "")),
+        sort=_parse_sort_str(str(req.get("sort", "") or "")),
+        limit=int(req.get("limit", 0) or 0),
+    )
+
+
+def call_compile_python(cur, req):
+    """Python compiler path — mirrors the SP's return shape for the runner."""
+    catalog = DbCatalog(cur, catalog_db=CATALOG_DB)
+    try:
+        qr = _request_from_yaml(req)
+    except Exception as e:
+        return dict(sql=None, is_valid=0, message=f"bad request: {e}",
+                    anchor=None, joined=None)
+    try:
+        plan = py_compile(qr, catalog)
+    except CompileError as e:
+        return dict(sql=None, is_valid=0, message=f"{e.code}: {e.message}",
+                    anchor=None, joined=None)
+    except Exception as e:
+        return dict(sql=None, is_valid=0, message=f"python compile crashed: {e}",
+                    anchor=None, joined=None)
+
+    sql = render(plan)
+    is_valid = 1
+    message = plan.chasm_warning or ""
+    if plan.unresolved:
+        is_valid = 0
+        message = (f"Could not resolve join path for datasets: "
+                   f"{', '.join(plan.unresolved)}")
+    elif plan.chasm_warning:
+        is_valid = 0
+    return dict(
+        sql=sql, is_valid=is_valid, message=message,
+        anchor=plan.anchor.dataset_name if plan.anchor else None,
+        joined=(", ".join(plan.joined_datasets) if plan.joined_datasets else None),
+    )
+
+
+def compile_for_engine(engine: str, cur, req):
+    if engine == "python":
+        return call_compile_python(cur, req)
+    return call_compile(cur, req)
 
 
 def run_sql(cur, sql):
@@ -185,10 +290,10 @@ def load_cases(cases_dir, name_filter=None, only=None):
 
 # ---------------------------------------------------------------- runner
 
-def run_one(cur, c, label_idx):
+def run_one(cur, c, label_idx, engine="sql"):
     cid = c.get("id", f"T{label_idx:02d}")
     title = c.get("title", "")
-    print(f"\n### {cid} — {title}\n")
+    print(f"\n### {cid} — {title} _(engine={engine})_\n")
     print(f"**Category:** {c.get('category','')}  ")
     print(f"**Source:** `{c['__file']}`  ")
     print(f"**Expected outcome:** `{c.get('expected','PASS')}`  ")
@@ -203,9 +308,9 @@ def run_one(cur, c, label_idx):
 
     # Compile
     try:
-        r = call_compile(cur, c.get("request") or {})
+        r = compile_for_engine(engine, cur, c.get("request") or {})
     except Exception as e:
-        print(f"**sp_semantic_request raised:** `{str(e).splitlines()[0][:200]}`\n")
+        print(f"**compile ({engine}) raised:** `{str(e).splitlines()[0][:200]}`\n")
         return "COMPILE_ERROR"
 
     print(f"**is_valid:** `{r['is_valid']}` | **anchor:** `{r['anchor']}` | **joined:** `{r['joined']}`")
@@ -284,6 +389,8 @@ def main():
                     help="substring filter on id/category/file")
     ap.add_argument("--only", default=None, help="exact id match")
     ap.add_argument("--report", default=str(DEFAULT_REPORT), help="report path")
+    ap.add_argument("--engine", default="sql", choices=("sql", "python", "both"),
+                    help="compile engine: SP (legacy), Python (v0.3 default), or both")
     args = ap.parse_args()
 
     cases = load_cases(CASES_DIR, args.filter, args.only)
@@ -294,9 +401,12 @@ def main():
     report_fh = open(args.report, "w")
     sys.stdout = Tee(sys.__stdout__, report_fh)
 
+    engines = (["sql", "python"] if args.engine == "both" else [args.engine])
+
     print(f"# Test Results — Teradata Semantic Catalog\n")
     print(f"- Run against `{USER}@{HOST}`")
-    print(f"- Cases loaded: **{len(cases)}**  ")
+    print(f"- Cases loaded: **{len(cases)}** × {len(engines)} engine(s)  ")
+    print(f"- Engines: {', '.join(engines)}")
     print(f"- Source: `{CASES_DIR}/*.yaml`\n")
 
     conn = teradatasql.connect(host=HOST, user=USER, password=PASS)
@@ -304,39 +414,59 @@ def main():
 
     print("## Case results\n")
     results = []
-    for i, c in enumerate(cases, 1):
-        try:
-            outcome = run_one(cur, c, i)
-        except Exception as e:
-            traceback.print_exc(file=sys.__stdout__)
-            outcome = "HARNESS_ERROR"
-        expected = c.get("expected", "PASS")
-        agree = "MATCH" if outcome == expected else "MISMATCH"
-        results.append((c.get("id", f"T{i:02d}"), c.get("category", ""),
-                        c.get("title", "")[:70], expected, outcome, agree,
-                        c["__file"]))
+    for eng in engines:
+        for i, c in enumerate(cases, 1):
+            try:
+                outcome = run_one(cur, c, i, engine=eng)
+            except Exception:
+                traceback.print_exc(file=sys.__stdout__)
+                outcome = "HARNESS_ERROR"
+            expected = c.get("expected", "PASS")
+            agree = "MATCH" if outcome == expected else "MISMATCH"
+            results.append((c.get("id", f"T{i:02d}"), eng, c.get("category", ""),
+                            c.get("title", "")[:70], expected, outcome, agree,
+                            c["__file"]))
 
     # Summary
     print("\n## Summary\n")
     md_table(
-        [(r[0], r[1], r[2], r[3], r[4], r[5], r[6]) for r in results],
-        ["id", "category", "title", "expected", "actual", "agreement", "file"],
-        max_rows=500, cell_width=80
+        results,
+        ["id", "engine", "category", "title", "expected", "actual",
+         "agreement", "file"],
+        max_rows=500, cell_width=80,
     )
 
     from collections import Counter
-    print("\n### Outcome distribution\n")
-    md_table([[k, v] for k, v in sorted(Counter(r[4] for r in results).items())],
-             ["outcome", "count"], max_rows=50)
-    print("\n### Expectation agreement\n")
-    md_table([[k, v] for k, v in sorted(Counter(r[5] for r in results).items())],
-             ["agreement", "count"], max_rows=50)
+    print("\n### Outcome distribution (by engine)\n")
+    distribution = Counter((r[1], r[5]) for r in results)
+    md_table([[k[0], k[1], v] for k, v in sorted(distribution.items())],
+             ["engine", "outcome", "count"], max_rows=50)
+    print("\n### Expectation agreement (by engine)\n")
+    agree_dist = Counter((r[1], r[6]) for r in results)
+    md_table([[k[0], k[1], v] for k, v in sorted(agree_dist.items())],
+             ["engine", "agreement", "count"], max_rows=50)
 
-    mismatches = [r for r in results if r[5] == "MISMATCH"]
+    # Parity view: compare SP vs Python outcomes for the same case id
+    if len(engines) == 2:
+        print("\n### Engine parity (SP vs Python)\n")
+        by_id = {}
+        for r in results:
+            by_id.setdefault(r[0], {})[r[1]] = r[5]
+        rows = []
+        for cid, per_eng in sorted(by_id.items()):
+            sp = per_eng.get("sql", "-")
+            py = per_eng.get("python", "-")
+            flag = "=" if sp == py else "≠"
+            rows.append([cid, sp, py, flag])
+        md_table(rows, ["id", "sql", "python", "match"],
+                 max_rows=500, cell_width=40)
+
+    mismatches = [r for r in results if r[6] == "MISMATCH"]
     if mismatches:
         print("\n### Mismatches\n")
-        md_table([(r[0], r[3], r[4], r[2]) for r in mismatches],
-                 ["id", "expected", "actual", "title"], max_rows=100, cell_width=80)
+        md_table([(r[0], r[1], r[4], r[5], r[3]) for r in mismatches],
+                 ["id", "engine", "expected", "actual", "title"],
+                 max_rows=200, cell_width=80)
 
     conn.close()
     print(f"\nReport written to: {args.report}", file=sys.__stdout__)

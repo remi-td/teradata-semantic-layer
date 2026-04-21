@@ -82,6 +82,11 @@ def _split_prefix(token: str) -> Tuple[Optional[str], str]:
 def _encode_filter_rhs(f: QueryFilter) -> str:
     op = f.op.upper()
     if op == "IN":
+        # Two calling conventions: (a) structured — values=[...] which we
+        # encode; (b) pre-encoded RAW — value is a parenthesised literal
+        # already, used by the test runner passing SP-packed strings.
+        if f.type and f.type.upper() == "RAW" and f.value is not None:
+            return str(f.value)
         if not f.values:
             raise CompileError(f"IN filter missing 'values' (lhs={f.field or f.metric})")
         return encode_in(f.values)

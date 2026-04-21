@@ -20,7 +20,8 @@ emit SQL; rendering is in render.py.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
+import re
+from typing import Dict, List, Optional, Set, Tuple
 
 from ..api.models import QueryFilter, QueryRequest, QuerySort
 from .catalog import CatalogDAO, MetricFilterRow, MetricRow
@@ -28,6 +29,7 @@ from .encoding import encode_in, encode_value
 from .errors import (
     AmbiguousPathError,
     CompileError,
+    CycleError,
     UnknownEntityError,
     UnknownModelError,
 )
@@ -44,6 +46,11 @@ from .logical import (
 
 
 _GRAIN_UNITS = {"DAY", "WEEK", "MONTH", "QUARTER", "YEAR"}
+
+# Phase 2 — metric-in-metric references. Chosen syntax: ${name}.
+# Unambiguous (no column collisions), trivial to parse pre-sqlglot.
+_METRIC_REF_RE = re.compile(r"\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}")
+_MAX_METRIC_REF_DEPTH = 8
 
 
 # --------------------------------------------------------- token parsing
@@ -212,43 +219,141 @@ class Resolver:
             name = (raw or "").strip()
             if not name:
                 continue
-            row = self.catalog.find_metric(model_id, name)
-            if row is None:
-                raise UnknownEntityError(f"Unknown metric: {name}")
+            expr, primary_ds_id, metric_id = self._compose_metric(
+                model_id, name, required, visited=set(), depth=0,
+            )
+            resolved.append(MetricRef(
+                metric_id=metric_id,
+                metric_name=name,
+                expression=expr,
+                primary_dataset_id=primary_ds_id,
+            ))
+        return resolved
 
-            if row.base_metric_id is not None:
-                base = self._load_base_metric(row.base_metric_id, for_metric=name)
-                filters = self.catalog.load_metric_filters(row.metric_id)
-                expression = _compose_filtered_expression(base, filters)
-                primary_ds_id = row.primary_dataset_id or base.primary_dataset_id
-                # Field refs: union of the filtered metric's own + base's + each filter's dataset
-                self._mark_metric_datasets(required, row.metric_id)
-                self._mark_metric_datasets(required, base.metric_id)
-                for frow in filters:
-                    ds = self.catalog.load_dataset(frow.dataset_id)
-                    if ds is not None:
-                        required.add(ds)
-            else:
-                if not row.expression_teradata:
-                    raise CompileError(
-                        f"Metric '{name}' has no TERADATA dialect expression."
-                    )
-                expression = row.expression_teradata
-                primary_ds_id = row.primary_dataset_id
-                self._mark_metric_datasets(required, row.metric_id)
+    def _compose_metric(self, model_id: int, name: str,
+                        required: _RequiredIndex,
+                        *, visited: Set[str], depth: int) -> Tuple[str, Optional[int], int]:
+        """Resolve ``name`` to (final SQL expression, primary_dataset_id, metric_id).
 
+        Handles three metric shapes in one recursive pass:
+          1. Simple metric with METRIC_EXPRESSION.expression (may contain
+             ``${other_metric}`` references).
+          2. Filtered rollup: (base_metric_id, METRIC_FILTER rows) composed
+             into AGG(CASE WHEN ... END).
+          3. Composed: expression contains ``${other}`` placeholders —
+             recursively resolve each and splice with paren-wrap.
+
+        Cycle detection: ``visited`` is the chain of ancestor metric names;
+        re-entering any name in it raises CycleError.
+
+        Depth limit: guards against deep legal chains that would bloat the
+        emitted SQL.
+        """
+        if name in visited:
+            raise CycleError(
+                f"Metric reference cycle detected: {' -> '.join([*visited, name])}",
+                chain=[*visited, name],
+            )
+        if depth > _MAX_METRIC_REF_DEPTH:
+            raise CompileError(
+                f"Metric '{name}' reference chain exceeds max depth "
+                f"({_MAX_METRIC_REF_DEPTH}). Refactor the composition."
+            )
+        visited = visited | {name}
+
+        row = self.catalog.find_metric(model_id, name)
+        if row is None:
+            raise UnknownEntityError(f"Unknown metric: {name}")
+
+        if row.base_metric_id is not None:
+            # Filtered rollup — aggregate_arg is raw SQL, not allowed to
+            # contain ${...} references (a metric reference inside an
+            # aggregate call is ill-formed).
+            base = self._load_base_metric(row.base_metric_id, for_metric=name)
+            filters = self.catalog.load_metric_filters(row.metric_id)
+            if base.aggregate_arg and _METRIC_REF_RE.search(base.aggregate_arg):
+                raise CompileError(
+                    f"Filtered metric '{name}': base '{base.metric_name}' "
+                    f"aggregate_arg contains a ${{...}} reference which is "
+                    f"not supported inside an aggregate."
+                )
+            expression = _compose_filtered_expression(base, filters)
+            primary_ds_id = row.primary_dataset_id or base.primary_dataset_id
+            self._mark_metric_datasets(required, row.metric_id)
+            self._mark_metric_datasets(required, base.metric_id)
+            for frow in filters:
+                ds = self.catalog.load_dataset(frow.dataset_id)
+                if ds is not None:
+                    required.add(ds)
             if primary_ds_id is not None:
                 pds = self.catalog.load_dataset(primary_ds_id)
                 if pds is not None:
                     required.add(pds)
+            return expression, primary_ds_id, row.metric_id
 
-            resolved.append(MetricRef(
-                metric_id=row.metric_id,
-                metric_name=name,
-                expression=expression,
-                primary_dataset_id=primary_ds_id,
-            ))
-        return resolved
+        if not row.expression_teradata:
+            raise CompileError(
+                f"Metric '{name}' has no TERADATA dialect expression."
+            )
+
+        raw_expr = row.expression_teradata
+        refs = _METRIC_REF_RE.findall(raw_expr)
+
+        if not refs:
+            # Plain metric — no composition needed.
+            primary_ds_id = row.primary_dataset_id
+            self._mark_metric_datasets(required, row.metric_id)
+            if primary_ds_id is not None:
+                pds = self.catalog.load_dataset(primary_ds_id)
+                if pds is not None:
+                    required.add(pds)
+            return raw_expr, primary_ds_id, row.metric_id
+
+        # Composed metric — recursively resolve each placeholder, splice.
+        sub_primary_ids: Set[int] = set()
+        expression = raw_expr
+        for ref in refs:
+            sub_expr, sub_pds, _ = self._compose_metric(
+                model_id, ref, required, visited=visited, depth=depth + 1,
+            )
+            # Wrap in parens for safe precedence.
+            expression = expression.replace("${" + ref + "}", f"({sub_expr})")
+            if sub_pds is not None:
+                sub_primary_ids.add(sub_pds)
+
+        # Primary dataset: prefer the composed metric's declared primary,
+        # otherwise unify from the sub-refs. Multiple distinct primaries
+        # among sub-refs means the composition itself spans grains — that
+        # is a chasm trap and we reject it up-front rather than emitting
+        # silently-wrong SQL.
+        declared = row.primary_dataset_id
+        if declared is not None:
+            primary_ds_id: Optional[int] = declared
+            if sub_primary_ids and declared not in sub_primary_ids and \
+               not sub_primary_ids.issubset({declared}):
+                # sub-refs span grains outside the declared primary
+                if len(sub_primary_ids) > 1:
+                    raise CompileError(
+                        f"Metric '{name}' composes sub-metrics on "
+                        f"{len(sub_primary_ids)} different grains — "
+                        f"cross-grain composition is a chasm trap."
+                    )
+        else:
+            if len(sub_primary_ids) > 1:
+                raise CompileError(
+                    f"Metric '{name}' composes sub-metrics on "
+                    f"{len(sub_primary_ids)} different grains — "
+                    f"cross-grain composition is a chasm trap."
+                )
+            primary_ds_id = next(iter(sub_primary_ids), None)
+
+        # Required datasets: this metric's own field_refs + primary.
+        self._mark_metric_datasets(required, row.metric_id)
+        if primary_ds_id is not None:
+            pds = self.catalog.load_dataset(primary_ds_id)
+            if pds is not None:
+                required.add(pds)
+        return expression, primary_ds_id, row.metric_id
 
     def _load_base_metric(self, base_id: int, *, for_metric: str) -> MetricRow:
         # Catalog DAO doesn't expose load-by-id directly; find via datasets

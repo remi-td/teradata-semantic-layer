@@ -42,6 +42,8 @@ from .logical import (
 )
 from .render import render
 from .resolver import Resolver
+from .joins import JoinResolver
+from .orchestrator import compile
 from .inmem_catalog import InMemoryCatalog
 from .catalog import (
     CatalogDAO,
@@ -68,7 +70,9 @@ __all__ = [
     "LogicalPlan",
     "SortKey",
     "render",
+    "compile",
     "Resolver",
+    "JoinResolver",
     "CatalogDAO",
     "InMemoryCatalog",
     "MetricRow",

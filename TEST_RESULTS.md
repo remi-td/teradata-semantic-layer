@@ -185,7 +185,7 @@ SELECT orders.o_orderstatus AS o_orderstatus, COUNT(DISTINCT orders.o_orderkey) 
   FROM sem_engine.orders AS orders WHERE orders.o_orderstatus = O GROUP BY orders.o_orderstatus
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5207] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5211] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
 
 **Outcome:** RUNTIME_ERROR
 
@@ -912,7 +912,7 @@ WHERE o.order_status IN ('SHIPPED','DELIVERED')
   AND o.order_date >= ADD_MONTHS(CURRENT_DATE, -36)) AS sales_cube
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5207] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5211] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
 
 **Outcome:** RUNTIME_ERROR
 
@@ -1305,7 +1305,7 @@ _(no SQL produced)_
 - `where` = `"lineitem.l_shipdate|>=|DATE '1995-01-01'"`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -1342,7 +1342,7 @@ _(no SQL produced)_
 - `where` = `"orders.o_orderstatus|IN|('O','F')"`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -1361,7 +1361,7 @@ _(no SQL produced)_
 - `where` = `"region.r_name|=|'AMERICA'"`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -1395,7 +1395,7 @@ GROUP BY
   orders.o_orderstatus
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5207] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5211] [Teradata Database] [Error 5628] Column O not found in sem_engine.orders.`
 
 **Outcome:** RUNTIME_ERROR
 
@@ -1791,7 +1791,7 @@ _(no SQL produced)_
 - `dimensions` = `'customer.c_mktsegment,orders.o_orderpriority,lineitem.l_returnflag'`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -2018,7 +2018,7 @@ SELECT SUM(lineitem.l_extendedprice * (1 - lineitem.l_discount)) AS revenue
 - `dimensions` = `'customer.c_mktsegment'`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_mktsegment' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -2097,7 +2097,7 @@ SELECT DISTINCT nation.n_name AS supplier_nation_n_name
 - `limit` = `5`
 
 **is_valid:** `0` | **anchor:** `None` | **joined:** `None`
-**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_name' has 2 paths to customer (roles: billed_to, placed_by). Prefix the dim with a role, e.g. role_name.field_name.`
+**validation_message:** `AMBIGUOUS_PATH: AMBIGUOUS_PATH: dim 'customer.c_name' has 2 paths to customer (roles: placed_by, billed_to). Prefix the dim with a role, e.g. role_name.field_name.`
 
 _(no SQL produced)_
 
@@ -2181,7 +2181,7 @@ FROM (
 ) AS sales_cube
 ```
 
-**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5207] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
+**Runtime error on compiled SQL:** `[Version 20.0.0.56] [Session 5211] [Teradata Database] [Error 3802] Database 'sales' does not exist.`
 
 **Outcome:** RUNTIME_ERROR
 

@@ -287,3 +287,41 @@ class DbCatalog:
             )
             for r in rows
         ]
+
+    def load_row_filters(self, model_id: int,
+                         groups: List[str]) -> List[str]:
+        """Return ROW_FILTER expressions on this model that apply to the
+        caller's groups. A NULL ``group_name`` means the policy applies
+        to everyone (a 'global' RLS rule).
+
+        Returns raw WHERE fragments in ``policy_ordinal`` order.
+        Empty list when the model has no RLS configured.
+        """
+        if not groups:
+            # Global-only rules still apply.
+            rows = self._fetchall(
+                f"""SELECT policy_expression
+                      FROM {self.db}.SECURITY_POLICY
+                     WHERE entity_type = 'MODEL'
+                       AND entity_id   = ?
+                       AND policy_type = 'ROW_FILTER'
+                       AND group_name IS NULL
+                     ORDER BY policy_ordinal""",
+                model_id,
+            )
+        else:
+            # parametrise the IN list
+            placeholders = ",".join("?" for _ in groups)
+            rows = self._fetchall(
+                f"""SELECT policy_expression
+                      FROM {self.db}.SECURITY_POLICY
+                     WHERE entity_type = 'MODEL'
+                       AND entity_id   = ?
+                       AND policy_type = 'ROW_FILTER'
+                       AND (group_name IS NULL
+                            OR group_name IN ({placeholders}))
+                     ORDER BY policy_ordinal""",
+                model_id, *groups,
+            )
+        return [str(r[0]).strip() for r in rows
+                if r and r[0] is not None and str(r[0]).strip()]

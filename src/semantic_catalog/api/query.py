@@ -12,7 +12,7 @@ from decimal import Decimal
 from datetime import date, datetime
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 
 from ..db import get_pool
 from ..compiler import DbCatalog, compile as py_compile, render
@@ -54,20 +54,42 @@ def _db_name() -> str:
     return load_settings().catalog_db
 
 
+def _parse_groups(header: Optional[str]) -> List[str]:
+    """Parse the X-Semantic-Groups header into a list of group names.
+
+    Accepts a comma-separated string (trimmed, empties dropped). Absent
+    header → empty list, which means 'only global (NULL group_name)
+    policies apply'. Never raises: malformed input is silently dropped.
+    """
+    if not header:
+        return []
+    return [g.strip() for g in header.split(",") if g.strip()]
+
+
 # ---- endpoints ----
 
 @router.post("/compile", response_model=QueryResponse)
-def compile_query(req: QueryRequest):
-    return _compile_and_maybe_execute(req, execute=False)
+def compile_query(req: QueryRequest,
+                  x_semantic_groups: Optional[str] = Header(default=None)):
+    return _compile_and_maybe_execute(req, execute=False, groups_header=x_semantic_groups)
 
 
 @router.post("/execute", response_model=QueryResponse)
-def execute_query(req: QueryRequest):
-    return _compile_and_maybe_execute(req, execute=True)
+def execute_query(req: QueryRequest,
+                  x_semantic_groups: Optional[str] = Header(default=None)):
+    return _compile_and_maybe_execute(req, execute=True, groups_header=x_semantic_groups)
 
 
-def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResponse:
-    """Default engine — Python compiler over DbCatalog."""
+def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool,
+                               groups_header: Optional[str] = None) -> QueryResponse:
+    """Default engine — Python compiler over DbCatalog.
+
+    When ``X-Semantic-Groups`` is supplied, the API layer looks up
+    ROW_FILTER policies on the requested model for those groups and
+    feeds the resulting WHERE fragments to the compiler via
+    ``CompileRequest.policy_fragments``. The request body itself cannot
+    set RLS predicates (see ``compiler/request.py``).
+    """
     db = _db_name()
     compile_sql: Optional[str] = None
     is_valid: Optional[int] = None
@@ -77,9 +99,26 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool) -> QueryResp
     execution: Optional[QueryExecution] = None
 
     compile_req = _to_compile_request(req)
+    groups = _parse_groups(groups_header)
 
     with get_pool().cursor() as cur:
         catalog = DbCatalog(cur, catalog_db=db)
+        # Resolve RLS before handing off to the compiler: if the model
+        # doesn't exist we let the compiler raise the UNKNOWN_MODEL
+        # error with a consistent shape, so skip the lookup in that case.
+        try:
+            model_id = catalog.resolve_model_id(compile_req.model)
+        except Exception:  # noqa: BLE001
+            model_id = None
+        if model_id is not None:
+            try:
+                fragments = catalog.load_row_filters(model_id, groups)
+            except Exception:  # noqa: BLE001
+                log.exception("load_row_filters failed — proceeding without RLS")
+                fragments = []
+            if fragments:
+                compile_req.policy_fragments = list(fragments)
+
         try:
             plan = py_compile(compile_req, catalog)
         except CompileError as e:

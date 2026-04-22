@@ -339,14 +339,52 @@ Flag these before offering to do something the layer can't:
   aren't emitted by the compiler. Topping / ranking is simulated via
   `sort + limit`.
 - **No grouping sets / rollup.** One GROUP BY per query.
-- **No row-level-security hook.** All traffic runs as the pooled DB
-  user — enforce RLS via Teradata views outside the semantic layer.
 - **Raw filters are conservatively gated.** `type: RAW` accepts only
   dates, numbers, single-quoted strings, and BETWEEN-date ranges. For
   anything else, use the structured `value` / `values` fields.
 
 If the user asks for any of these, say so explicitly and offer a
 workaround.
+
+---
+
+## 7b · Row-level security (operator-trusted WHERE injection)
+
+Since v0.4 the compiler will inject operator-defined WHERE fragments
+for every `/api/query/{compile,execute}` call that carries an
+`X-Semantic-Groups` header. The fragments live in the `SECURITY_POLICY`
+catalog table (`policy_type = 'ROW_FILTER'`) and can be group-scoped or
+global (`group_name IS NULL`). The user's request body cannot set
+RLS predicates — by design.
+
+Wire RLS up:
+
+```sql
+-- one-time, per model (via tq or Vantage Studio):
+INSERT INTO sem_engine.SECURITY_POLICY
+  (entity_type, entity_id, policy_ordinal, policy_type, group_name, policy_expression)
+VALUES
+  ('MODEL', 42, 1, 'ROW_FILTER', 'branch_100', 'events.CO_LE IN (''100'')'),
+  ('MODEL', 42, 2, 'ROW_FILTER', NULL,         'events.is_deleted = 0');
+```
+
+Then every call:
+
+```bash
+curl -s -X POST http://localhost:8080/api/query/compile \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "X-Semantic-Groups: branch_100" \
+     -H "Content-Type: application/json" \
+     -d '{"model":"p360","metrics":["amount_sum"]}' | jq '.compiled_sql'
+```
+
+The compiler AND-joins the global policy, every group-matched policy,
+and the user's own filters. It does not parse, template, or validate
+the fragments — the `policy_expression` column is operator-trusted raw
+SQL (use `CURRENT_USER` for identity binding when needed).
+
+Scope (v0.4): `entity_type = MODEL` only. DATASET- and VIEW-scoped
+policies are declared in the DDL but not yet consumed.
 
 ---
 

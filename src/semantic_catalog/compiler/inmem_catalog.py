@@ -40,6 +40,8 @@ class InMemoryCatalog:
     relationships_by_model: Dict[int, List[RelationshipRow]] = field(default_factory=dict)
     # rel_columns[relationship_id] -> list of RelColumnRow
     rel_columns: Dict[int, List[RelColumnRow]] = field(default_factory=dict)
+    # row_filters_by_model[model_id] -> list of (expression, group_name|None)
+    row_filters_by_model: Dict[int, List[Tuple[str, Optional[str]]]] = field(default_factory=dict)
 
     # ----- DAO methods (CatalogDAO Protocol) ------------------------
 
@@ -89,6 +91,18 @@ class InMemoryCatalog:
 
     def load_rel_columns(self, relationship_id: int) -> List[RelColumnRow]:
         return list(self.rel_columns.get(relationship_id, []))
+
+    def load_row_filters(self, model_id: int, groups: List[str]) -> List[str]:
+        """InMem stub: returns fragments registered via ``add_row_filter``.
+
+        Tests use ``add_row_filter(model_id, fragment, group_name=None)``
+        to pre-register policies on the fake catalog.
+        """
+        out: List[str] = []
+        for frag, gname in self.row_filters_by_model.get(model_id, []):
+            if gname is None or gname in groups:
+                out.append(frag)
+        return out
 
     # ----- Builder conveniences (test-only) -------------------------
 
@@ -201,6 +215,13 @@ class InMemoryCatalog:
                 for i, (ff, tf) in enumerate(columns)
             ]
         return r
+
+    def add_row_filter(self, model_id: int, expression: str,
+                       *, group_name: Optional[str] = None) -> None:
+        """Register a ROW_FILTER policy on the model for testing RLS."""
+        self.row_filters_by_model.setdefault(model_id, []).append(
+            (expression, group_name)
+        )
 
 
 # Register at import so Protocol structural check is eager during type checks.

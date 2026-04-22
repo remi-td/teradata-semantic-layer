@@ -47,6 +47,12 @@ class CompileRequest:
     sort: List[CompileSort] = _dc_field(default_factory=list)
     limit: int = 0
     execute: bool = False
+    # Row-level security: raw WHERE fragments injected by the API layer
+    # from the SECURITY_POLICY catalog table for the caller's groups.
+    # The compiler AND-joins them with the user's filters; it does NOT
+    # parse or template them (operator-trusted SQL). Never populated
+    # from a user-supplied request body — always built server-side.
+    policy_fragments: List[str] = _dc_field(default_factory=list)
 
 
 def from_mapping(payload: Any) -> CompileRequest:
@@ -106,4 +112,6 @@ def from_mapping(payload: Any) -> CompileRequest:
         sort=[_sort(x) for x in (data.get("sort") or [])],
         limit=int(data.get("limit") or 0),
         execute=bool(data.get("execute") or False),
+        # policy_fragments is deliberately NOT read from the mapping —
+        # untrusted input must not set RLS predicates.
     )

@@ -238,6 +238,24 @@ class Resolver:
                 f"Split the request by grain."
             )
 
+        # Row-level-security fragments (optional, operator-trusted).
+        # Each fragment is a raw WHERE predicate — we append as a
+        # ``WHERE_RAW`` filter so the renderer emits it verbatim without
+        # parsing. Fragments come from the API layer (which looked them
+        # up in SECURITY_POLICY for the caller's groups). The resolver
+        # does not introspect, validate, or quote them.
+        #
+        # ``policy_fragments`` is only present on ``CompileRequest``;
+        # when the caller passes a pydantic ``QueryRequest`` directly
+        # (e.g. older tests), the attribute is missing and we treat it
+        # as an empty list.
+        raw_fragments = getattr(req, "policy_fragments", None) or []
+        policy_filters: List[ResolvedFilter] = [
+            ResolvedFilter(kind="WHERE_RAW", lhs=frag, op="", rhs="")
+            for frag in raw_fragments
+            if frag and frag.strip()
+        ]
+
         return LogicalPlan(
             model_id=model_id,
             model_name=req.model,
@@ -245,7 +263,7 @@ class Resolver:
             required_datasets=required.as_list(),
             metrics=metrics,
             dimensions=dimensions,
-            filters=where_filters + having_filters,
+            filters=where_filters + having_filters + policy_filters,
             join_steps=[],    # populated by join resolver (task #23)
             sort=[SortKey(field=s.field, direction=s.direction.upper()) for s in req.sort],
             limit=int(req.limit or 0),

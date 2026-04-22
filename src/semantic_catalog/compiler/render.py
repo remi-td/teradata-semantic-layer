@@ -83,7 +83,13 @@ def _metric_select(m: MetricRef) -> str:
 
 def _filter_predicate(f: ResolvedFilter, plan: LogicalPlan) -> str:
     """Render one predicate. For HAVING, lhs is a metric name — substitute
-    its composed expression so the SQL references the aggregate directly."""
+    its composed expression so the SQL references the aggregate directly.
+
+    ``WHERE_RAW`` filters carry the whole predicate verbatim in ``lhs``
+    (RLS fragments from SECURITY_POLICY — already operator-trusted SQL).
+    """
+    if f.kind == "WHERE_RAW":
+        return f.lhs
     if f.kind == "HAVING":
         metric = next((m for m in plan.metrics if m.metric_name == f.lhs), None)
         if metric is None:
@@ -119,7 +125,8 @@ def render(plan: LogicalPlan, *, dialect: str = "teradata",
         join_node = sqlglot.parse_one(step.join_sql, dialect=dialect, into=exp.Join)
         q = q.join(join_node, dialect=dialect)
 
-    where_preds = [_filter_predicate(f, plan) for f in plan.filters if f.kind == "WHERE"]
+    where_preds = [_filter_predicate(f, plan) for f in plan.filters
+                   if f.kind in ("WHERE", "WHERE_RAW")]
     for pred in where_preds:
         q = q.where(pred, dialect=dialect)
 

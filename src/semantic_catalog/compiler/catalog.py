@@ -86,3 +86,14 @@ class CatalogDAO(Protocol):
     def find_relationship_by_role(self, model_id: int,
                                   role_name: str) -> Optional[RelationshipRow]: ...
     def load_rel_columns(self, relationship_id: int) -> List[RelColumnRow]: ...
+
+    # -------- security -------
+    def load_row_filters(self, model_id: int,
+                         groups: List[str]) -> List[str]:
+        """Return ROW_FILTER policy expressions for the model that apply
+        to any of the supplied groups (or whose ``group_name`` is NULL,
+        meaning 'applies to everyone'). Called by the API layer for
+        per-request RLS — see ``CompileRequest.policy_fragments``. May
+        return an empty list; implementations that don't support RLS
+        return an empty list."""
+        ...

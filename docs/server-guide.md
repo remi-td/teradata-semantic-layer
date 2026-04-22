@@ -168,6 +168,52 @@ When set, every `/api/*` and `/mcp/*` request must include `Authorization: Beare
 
 ---
 
+## Row-level security (RLS)
+
+Row-level predicates live in the `SECURITY_POLICY` catalog table. Each row is:
+
+| Column              | Meaning                                                             |
+|---------------------|---------------------------------------------------------------------|
+| `entity_type`       | `MODEL` (DATASET / VIEW are declared but not yet consumed)          |
+| `entity_id`         | Surrogate id of the entity                                          |
+| `policy_ordinal`    | Ordering (also disambiguates multiple policies on the same entity)  |
+| `policy_type`       | `ROW_FILTER` (the compiler reads only this type today)              |
+| `group_name`        | The group this policy applies to. `NULL` = applies to every caller. |
+| `policy_expression` | Raw Teradata WHERE fragment (e.g. `events.CO_LE IN ('100')`)        |
+
+Callers identify themselves by sending `X-Semantic-Groups: g1,g2,...` to `/api/query/{compile,execute}`. The server looks up:
+
+- every `ROW_FILTER` row with `group_name IS NULL` (always applies), **plus**
+- every `ROW_FILTER` row whose `group_name` appears in the header
+
+It ANDs them all into the compiled WHERE clause alongside any user-supplied `where` filters. The request body itself cannot set `policy_fragments` — that field is populated server-side only.
+
+Important semantics:
+
+- `policy_expression` is operator-trusted. The compiler does not parse, template, or quote it. If you need identity binding, use Teradata's built-ins (`CURRENT_USER`, session variables).
+- The caller cannot see which policies applied. If you need auditability, log `X-Semantic-Groups` alongside the compiled SQL.
+- JWT parsing and group claims are out of scope for v0.4 — the header is trusted as-is when `SEMANTIC_API_TOKEN` is set. Pair with a trusted reverse proxy or wrap the server in an agent that injects the header after its own auth check.
+
+Example wire-up:
+
+```sql
+INSERT INTO sem_engine.SECURITY_POLICY
+  (entity_type, entity_id, policy_ordinal, policy_type, group_name, policy_expression)
+VALUES
+  ('MODEL', 42, 1, 'ROW_FILTER', 'branch_100', 'events.CO_LE IN (''100'')'),
+  ('MODEL', 42, 2, 'ROW_FILTER', NULL,         'events.is_deleted = 0');
+```
+
+```bash
+curl -sS -X POST http://localhost:8080/api/query/execute \
+     -H "Authorization: Bearer $TOKEN" \
+     -H "X-Semantic-Groups: branch_100" \
+     -H "Content-Type: application/json" \
+     -d '{"model":"p360","metrics":["amount_sum"]}'
+```
+
+---
+
 ## Scaling
 
 ### Vertical

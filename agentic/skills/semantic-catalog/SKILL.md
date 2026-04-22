@@ -335,13 +335,18 @@ Flag these before offering to do something the layer can't:
 - **No time-shifted metrics.** Period-over-period (`CY − PY`), `MoM`,
   `12M rolling` as a metric kind aren't first-class yet. Achieve them
   with two requests and client-side diff, or fall through to raw SQL.
+  Roadmap: v0.5 `period_compare` metric kind.
 - **No window functions.** `RANK()`, `ROW_NUMBER()`, `SUM() OVER ()`
   aren't emitted by the compiler. Topping / ranking is simulated via
-  `sort + limit`.
-- **No grouping sets / rollup.** One GROUP BY per query.
+  `sort + limit`. Roadmap: v0.5+.
+- **No grouping sets / rollup.** One GROUP BY per query. Roadmap: v0.5.
 - **Raw filters are conservatively gated.** `type: RAW` accepts only
   dates, numbers, single-quoted strings, and BETWEEN-date ranges. For
   anything else, use the structured `value` / `values` fields.
+- **`FORMAT_SPEC` round-trips via OSI export but not yet via
+  `/api/import`.** To register format info on a metric or field today,
+  INSERT directly into `FORMAT_SPEC` (entity_type + entity_id). The
+  exporter and `semantic.describe` already surface it.
 
 If the user asks for any of these, say so explicitly and offer a
 workaround.

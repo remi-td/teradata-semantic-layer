@@ -100,6 +100,35 @@ def _load_ai_context(cur, db: str, entity_type: str,
     return ctx or None
 
 
+def _load_format_spec(cur, db: str, entity_type: str,
+                      entity_id: int) -> Optional[Dict[str, Any]]:
+    """Pull the FORMAT_SPEC row (if any) for this entity into an OSI
+    ``format`` block. Keys are dropped when NULL so the YAML stays clean.
+    """
+    r = _fetchone(cur,
+                  f"SELECT format_type, currency_code, decimal_places, "
+                  f"       abbreviation, date_format, custom_format "
+                  f"  FROM {db}.FORMAT_SPEC "
+                  f" WHERE entity_type = ? AND entity_id = ?",
+                  entity_type, entity_id)
+    if not r:
+        return None
+    spec: Dict[str, Any] = {}
+    if r[0]:
+        spec["type"] = str(r[0]).strip()
+    if r[1]:
+        spec["currency_code"] = str(r[1]).strip()
+    if r[2] is not None:
+        spec["decimal_places"] = int(r[2])
+    if r[3]:
+        spec["abbreviation"] = str(r[3]).strip()
+    if r[4]:
+        spec["date_format"] = str(r[4]).strip()
+    if r[5]:
+        spec["custom_format"] = str(r[5]).strip()
+    return spec or None
+
+
 def _build_datasets(cur, db: str, model_id: int) -> List[Dict[str, Any]]:
     rows = _fetchall(cur,
                      f"""SELECT dataset_id, dataset_name, description,
@@ -149,6 +178,7 @@ def _build_fields(cur, db: str, dataset_id: int) -> List[Dict[str, Any]]:
                      dataset_id)
     out: List[Dict[str, Any]] = []
     for row in rows:
+        fid = int(row[0])
         entry: Dict[str, Any] = {"name": str(row[1]).strip()}
         if row[3]:
             entry["expression"] = {
@@ -165,6 +195,9 @@ def _build_fields(cur, db: str, dataset_id: int) -> List[Dict[str, Any]]:
             entry["data_type"] = str(row[8]).strip()
         if row[4]:
             entry["description"] = str(row[4])
+        fmt = _load_format_spec(cur, db, "FIELD", fid)
+        if fmt:
+            entry["format"] = fmt
         out.append(entry)
     return out
 
@@ -254,5 +287,8 @@ def _build_metrics(cur, db: str, model_id: int) -> List[Dict[str, Any]]:
         ac = _load_ai_context(cur, db, "METRIC", mid)
         if ac:
             entry["ai_context"] = ac
+        fmt = _load_format_spec(cur, db, "METRIC", mid)
+        if fmt:
+            entry["format"] = fmt
         out.append(entry)
     return out

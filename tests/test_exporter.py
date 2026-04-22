@@ -53,6 +53,9 @@ def test_minimal_model_exports_shape() -> None:
         (100, "l_orderkey", "K", "l_orderkey", None, None, 0, 0, "INTEGER", "l_orderkey"),
         (101, "l_quantity", "A", "l_quantity", None, None, 1, 0, "DECIMAL", "l_quantity"),
     ])
+    # FORMAT_SPEC per field (both empty)
+    cur.script([])
+    cur.script([])
     # DATASET_KEY PK
     cur.script([("l_orderkey",)])
     # AI_CONTEXT DATASET — none
@@ -66,6 +69,8 @@ def test_minimal_model_exports_shape() -> None:
     # METRIC_EXPRESSION
     cur.script([("TERADATA", "SUM(lineitem.l_extendedprice)")])
     # AI_CONTEXT METRIC
+    cur.script([])
+    # FORMAT_SPEC METRIC
     cur.script([])
     # AI_CONTEXT MODEL
     cur.script([])
@@ -113,12 +118,14 @@ def test_relationship_rendering_includes_cols() -> None:
         (1, "orders",   None, None, "tpch", "orders",   None),
         (2, "customer", None, None, "tpch", "customer", None),
     ])
-    # Fields for dataset 1 (orders) + PK + AI
+    # Fields for dataset 1 (orders) + FORMAT_SPEC + PK + AI
     cur.script([(10, "o_custkey", "K", "o_custkey", None, None, 0, 0, "INTEGER", "o_custkey")])
+    cur.script([])                      # field FORMAT_SPEC
     cur.script([("o_custkey",)])       # PK
     cur.script([])                      # DATASET AI ctx
-    # Fields for dataset 2 (customer) + PK + AI
+    # Fields for dataset 2 (customer) + FORMAT_SPEC + PK + AI
     cur.script([(20, "c_custkey", "K", "c_custkey", None, None, 0, 0, "INTEGER", "c_custkey")])
+    cur.script([])                      # field FORMAT_SPEC
     cur.script([("c_custkey",)])
     cur.script([])
     # Relationship section: DATASET re-query for name map
@@ -139,6 +146,42 @@ def test_relationship_rendering_includes_cols() -> None:
     assert r["from"] == "orders" and r["to"] == "customer"
     assert r["from_columns"] == ["o_custkey"] and r["to_columns"] == ["c_custkey"]
     assert r["cardinality"] == "MANY_TO_ONE"
+
+
+def test_format_spec_surfaces_on_metric_and_field() -> None:
+    cur = ScriptedCursor()
+    # Model
+    cur.script([(1, "m", None)])
+    # Datasets
+    cur.script([(10, "sales", None, None, "ops", "sales", None)])
+    # Fields: one
+    cur.script([(100, "amount", "A", "amount", None, None, 1, 0, "DECIMAL", "amount")])
+    # FORMAT_SPEC on the field (non-empty)
+    cur.script([("CURRENCY", "USD", 2, None, None, None)])
+    # PK + DATASET AI
+    cur.script([])
+    cur.script([])
+    # Relationships: re-query for name map + relationships themselves
+    cur.script([(10, "sales")])
+    cur.script([])
+    # METRICS
+    cur.script([(50, "revenue", "USD sum", "SIMPLE")])
+    cur.script([("TERADATA", "SUM(sales.amount)")])  # METRIC_EXPRESSION
+    cur.script([])                                    # METRIC AI
+    cur.script([("CURRENCY", "USD", 2, "COMPACT", None, None)])  # METRIC FORMAT_SPEC
+    # model AI
+    cur.script([])
+
+    doc = build_osi_document(cur, DB, "m")
+    ds = doc["semantic_model"][0]["datasets"][0]
+    field = ds["fields"][0]
+    assert field["format"] == {"type": "CURRENCY", "currency_code": "USD",
+                                "decimal_places": 2}
+    metric = doc["semantic_model"][0]["metrics"][0]
+    assert metric["format"] == {
+        "type": "CURRENCY", "currency_code": "USD",
+        "decimal_places": 2, "abbreviation": "COMPACT",
+    }
 
 
 def test_ai_context_synonyms_parsed_from_json_string() -> None:

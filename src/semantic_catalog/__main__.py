@@ -194,6 +194,12 @@ def _examples_dir() -> Path:
 #                     GTT re-creation: Teradata refuses DROP TABLE on a GTT
 #                     that any session has materialised, so we treat an
 #                     already-existing GTT as idempotent).
+# Install sequence. Post-v0.4 cleanup: the SQL compiler
+# (``33_sp_semantic_request``) and SQL importer (``60_sp_semantic_import``)
+# are superseded by the pure-Python compiler/importer in
+# ``semantic_catalog.compiler`` / ``semantic_catalog.importer`` and are no
+# longer deployed. The search + describe macros stay because the GUI and
+# agents call them directly.
 _CORE_SEQUENCE: list[tuple[str, str]] = [
     ("split", "01_ddl_enums"),
     ("split", "02_ddl_core"),
@@ -205,13 +211,9 @@ _CORE_SEQUENCE: list[tuple[str, str]] = [
     ("split", "07_comments"),
     ("split", "08_collect_stats"),
     ("split", "09_seed_enums"),
-    ("split-tolerant", "19_gtt_yaml_tmp"),
     ("whole", "20_export_osi"),
     ("whole", "30_sp_semantic_search"),
     ("whole", "31_sp_semantic_describe"),
-    ("split-tolerant", "32_request_staging"),
-    ("whole", "33_sp_semantic_request"),
-    ("whole", "60_sp_semantic_import"),
 ]
 
 

@@ -201,7 +201,7 @@ def _write_field(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[Status
             f"    ColumnName = ?, field_order = ? WHERE field_id = ?",
             (type_code, p.get("expression"), p.get("description"), p.get("label"),
              is_dim, is_tdim, p.get("data_type"), p.get("column_name"),
-             p.get("field_order"), existing),
+             int(p.get("field_order") or 0), existing),
         )
         return "OK", f"updated field {p['dataset']}.{name}", existing
     cur.execute(
@@ -211,7 +211,7 @@ def _write_field(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[Status
         f"VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (ds_id, name, type_code, p.get("expression"), p.get("description"),
          p.get("label"), is_dim, is_tdim, p.get("data_type"),
-         p.get("column_name"), p.get("field_order")),
+         p.get("column_name"), int(p.get("field_order") or 0)),
     )
     new_id = _resolve_field_id(cur, db, ds_id, name)
     return "OK", f"inserted field {p['dataset']}.{name}", new_id
@@ -336,7 +336,7 @@ def _write_relationship(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple
                            f"(from={p['from']}, to={p['to']})")
     name = p.get("name") or f"{p['from']}_to_{p['to']}"
     card = (p.get("cardinality") or "MANY_TO_ONE").upper()
-    join_hint = p.get("join_type")
+    join_hint = p.get("join_type") or "INNER"
     role = p.get("role_name") or p.get("role")
     existing = _resolve_relationship_id(cur, db, model_id, name)
     if existing is not None:
@@ -456,7 +456,7 @@ def _write_view_member(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[
         (view_id, ord_, p["name"], str(p["member_type"]).upper(),
          field_id, metric_id, p.get("inline_expression"),
          p.get("display_name"), int(p.get("is_public", 1)),
-         p.get("member_order")),
+         int(p.get("member_order") or p.get("ordinal") or 0)),
     )
     return "OK", f"inserted view_member {p['view']}.{p['name']}", view_id
 

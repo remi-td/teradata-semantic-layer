@@ -79,17 +79,55 @@ def _split_prefix(token: str) -> Tuple[Optional[str], str]:
 
 # ---------------------------------------------------------- value encode
 
+# The operator is spliced verbatim into SQL; gate it with an allow-list.
+_ALLOWED_OPS = {
+    "=", "<>", "!=", ">", ">=", "<", "<=",
+    "IN", "NOT IN", "LIKE", "NOT LIKE",
+    "IS NULL", "IS NOT NULL",
+    "BETWEEN",
+}
+
+# RAW values must match a conservative shape. Permits dates
+# (``DATE 'yyyy-mm-dd'``), BETWEEN pairs, parenthesised IN tuples, and
+# simple number / identifier lists — enough for the P360 BR queries
+# without opening a free-form SQL surface. Rejects ``;``, ``--``,
+# ``/*``, function calls and block comments.
+_RAW_SAFE_RE = re.compile(
+    r"""^(
+          \(                                   # IN tuple
+            \s*'[^';\\]*'(?:\s*,\s*'[^';\\]*')* \s*
+          \)
+        | DATE\s+'\d{4}-\d{2}-\d{2}'            # a single DATE literal
+           (?:\s+AND\s+DATE\s+'\d{4}-\d{2}-\d{2}')?  # ... or BETWEEN pair
+        | -?\d+(?:\.\d+)?                       # plain number
+           (?:\s+AND\s+-?\d+(?:\.\d+)?)?        # ... or BETWEEN pair
+        | '[^';\\]*'                            # a single quoted string
+    )$""",
+    re.VERBOSE | re.IGNORECASE,
+)
+
+
+def _validate_op(op: str, lhs_for_error: str) -> str:
+    op_norm = " ".join(op.strip().upper().split())
+    if op_norm not in _ALLOWED_OPS:
+        raise CompileError(f"unsupported filter op '{op}' (lhs={lhs_for_error})")
+    return op_norm
+
+
 def _encode_filter_rhs(f: QueryFilter) -> str:
-    op = f.op.upper()
-    if op == "IN":
-        # Two calling conventions: (a) structured — values=[...] which we
-        # encode; (b) pre-encoded RAW — value is a parenthesised literal
-        # already, used by the test runner passing SP-packed strings.
+    op = _validate_op(f.op, f.field or f.metric or "?")
+    if op == "IN" or op == "NOT IN":
         if f.type and f.type.upper() == "RAW" and f.value is not None:
+            if not _RAW_SAFE_RE.match(str(f.value)):
+                raise CompileError(f"RAW IN filter rejected (unsafe value): {f.value!r}")
             return str(f.value)
         if not f.values:
             raise CompileError(f"IN filter missing 'values' (lhs={f.field or f.metric})")
         return encode_in(f.values)
+    if f.type and f.type.upper() == "RAW":
+        if f.value is None or not _RAW_SAFE_RE.match(str(f.value)):
+            raise CompileError(f"RAW filter rejected (unsafe value): {f.value!r}")
+        return str(f.value)
     return encode_value(f.value, f.type)
 
 

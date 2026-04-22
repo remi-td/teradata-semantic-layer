@@ -17,12 +17,12 @@ also stand on their own as a REST API for agents that aren't MCP-aware.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ..api.models import QueryRequest
+from ..auth import require_token
 from ..compiler import DbCatalog, compile as py_compile, render
 from ..compiler.errors import CompileError
 from ..db import get_pool
@@ -108,20 +108,7 @@ TOOL_SCHEMAS: List[Dict[str, Any]] = [
 ]
 
 
-# -- auth -------------------------------------------------------------
-
-def _require_token(authorization: Optional[str] = Header(None)) -> None:
-    expected = os.environ.get("SEMANTIC_MCP_TOKEN")
-    if not expected:
-        return
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "missing bearer token")
-    token = authorization.split(None, 1)[1].strip()
-    if token != expected:
-        raise HTTPException(403, "invalid bearer token")
-
-
-router = APIRouter(prefix="/mcp", tags=["mcp"], dependencies=[Depends(_require_token)])
+router = APIRouter(prefix="/mcp", tags=["mcp"], dependencies=[Depends(require_token)])
 
 
 # -- helpers ----------------------------------------------------------

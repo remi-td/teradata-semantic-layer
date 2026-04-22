@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +23,7 @@ from .api.catalog import router as catalog_router
 from .api.export import router as export_router
 from .api.importer import router as import_router
 from .api.query import router as query_router
+from .auth import require_token
 from .config import load_settings
 from .mcp import router as mcp_router
 
@@ -50,14 +51,18 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # API routers
-    app.include_router(catalog_router)
-    app.include_router(query_router)
-    app.include_router(import_router)
-    app.include_router(export_router)
+    # API routers — every /api/* endpoint shares the same bearer-token
+    # dependency as /mcp/* (via .auth.require_token). When no token env
+    # var is set, require_token is a no-op (localhost dev default).
+    auth_dep = [Depends(require_token)]
+    app.include_router(catalog_router, dependencies=auth_dep)
+    app.include_router(query_router,   dependencies=auth_dep)
+    app.include_router(import_router,  dependencies=auth_dep)
+    app.include_router(export_router,  dependencies=auth_dep)
     app.include_router(mcp_router)
 
-    # Health / info.
+    # Health / info — `/api/health` stays public (liveness for load
+    # balancers). `/api/ping` requires auth because it exercises the DB.
     @app.get("/api/health")
     def health():
         return {
@@ -67,17 +72,24 @@ def create_app() -> FastAPI:
             "database": settings.catalog_db,
         }
 
-    @app.get("/api/ping")
+    @app.get("/api/ping", dependencies=auth_dep)
     def ping():
-        """Cheap liveness probe — actually hits the database."""
+        """Cheap liveness probe — actually hits the database.
+
+        Returns a sanitised error message on failure so the raw driver
+        exception (which often includes the DATABASE_URI with its
+        password) never reaches the caller. The full traceback goes to
+        the server log only.
+        """
         from .db import get_pool
         try:
             with get_pool().cursor() as cur:
                 cur.execute("SELECT 1")
                 cur.fetchone()
             return {"ok": True, "host": settings.host}
-        except Exception as e:
-            raise HTTPException(503, f"database unreachable: {e}")
+        except Exception as e:  # noqa: BLE001
+            log.exception("ping failed")
+            raise HTTPException(503, "database unreachable")
 
     # Static frontend.
     if STATIC_DIR.is_dir():

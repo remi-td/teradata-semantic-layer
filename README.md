@@ -1,152 +1,174 @@
 # Teradata Semantic Catalog
 
-A semantic layer that lives **inside** Teradata Vantage, ships with a
-lightweight web GUI, and speaks the interchange formats business tools
-already know (OSI, MetricFlow).
+A **Teradata-native semantic layer** that lets AI agents and BI tools
+ask business questions against a governed metric + dimension model —
+without asking a human to write SQL.
 
-- **Catalog is a schema, not a service.** Metadata lives in ordinary Teradata
-  tables, queryable with SQL.
-- **Cubes are datasets.** Start with one cube on day one; decompose into
-  entities, keys, and relationships when you're ready — never a rewrite.
-- **Fields are atomic.** Dimensions, measures, keys, and join columns are
-  all fields in different roles. One field, many roles.
-- **The catalog is the engine.** Query compilation, EXPLAIN validation, and
-  import/export all run as SQL macros and procedures. No external
-  middleware needed.
-- **GUI is optional and removable.** A small FastAPI process renders a
-  Cytoscape graph over the catalog — delete it and everything still works
-  for agents speaking directly to the SQL API.
+- **Speaks MCP out of the box.** A Model Context Protocol server runs
+  inside the same process as the REST API and the GUI. Point Claude,
+  Cursor, or any MCP client at `/mcp/tools` and you have five
+  agent-ready tools: `semantic.search`, `semantic.describe`,
+  `semantic.compile`, `semantic.execute`, `semantic.export_osi`.
+- **Catalog is a schema, not a service.** Metadata lives in ordinary
+  Teradata tables and is fully queryable with SQL.
+- **Cubes are datasets.** Start with one cube on day one; decompose
+  into entities, keys, and relationships as the model matures — never a
+  rewrite.
+- **The compiler is pure Python.** Resolution, join-graph walk,
+  filtered-metric composition, chasm-trap detection, and SQL rendering
+  (via `sqlglot`) all happen in-process. No SPL, no `bteq`, no external
+  middleware.
+- **One-command install.** `semantic-catalog install` deploys every
+  catalog object in one shot; the GUI and MCP ship with the package.
 
 ---
 
-## Quickstart
+## Why this, versus MetricFlow / Cube / Honeydew
+
+The semantic layer runs **inside Teradata**, not in front of it. That
+means:
+
+- Every metric definition is a row in `SEMANTIC_MODEL` / `METRIC` /
+  `METRIC_FILTER`. Version-controlled by DBAs the same way tables are.
+- The compiler returns native Teradata SQL with PI-aware joins, not
+  pushdown from a generic planner.
+- Progressive maturity — a "cube" (flat query with labelled dimensions
+  and measures) is a legal first-class dataset. Most competitors force
+  full decomposition up front.
+
+Read `semantic_catalog_design_v2.md` for the ontology and
+`sql_compilation_engine_design.md` for the compiler internals.
+
+---
+
+## Quickstart (five commands)
 
 ```bash
-# 1. Install
-git clone <this repo>
-cd semantic-layer
-pip install -e ".[dev]"
+# 1. Clone + install
+git clone https://github.com/remi-td/semantic-catalog.git
+cd semantic-catalog
+pip install .
 
 # 2. Point at a Teradata
 export DATABASE_URI="teradata://user:password@host:1025/demo_user"
 
-# 3. Deploy catalog + sample data (one-time)
-semantic-catalog deploy --mode split --include 00_drop_all 01_ddl_enums 02_ddl_core 03_ddl_relationships \
-                                     04_ddl_metrics 05_ddl_views 06_ddl_metadata 07_comments \
-                                     08_collect_stats 09_seed_enums 10_scenario_tpch_osi \
-                                     11_scenario_tpch_orders 12_scenario_exec_dashboard \
-                                     19_gtt_yaml_tmp 20_export_osi \
-                                     32_request_staging 40_sample_tpch_ddl 41_sample_tpch_data \
-                                     51_schema_ext 52_chasm_scenario_metrics
-# Procedures & macros are submitted one file at a time:
-semantic-catalog deploy --mode whole --include 30_sp_semantic_search 31_sp_semantic_describe \
-                                                33_sp_semantic_request 60_sp_semantic_import
+# 3. Deploy the catalog objects (one command, every DDL + macro)
+semantic-catalog install
 
-# 4. Launch the GUI
+# 4. Load a ready-made demo (TPC-H order analytics)
+semantic-catalog install-example tpch_physical   # sample data
+semantic-catalog install-example tpch_orders     # Honeydew-style model
+
+# 5. Launch the GUI + MCP server
 semantic-catalog serve
-# → http://127.0.0.1:8080
+# → http://127.0.0.1:8080   (GUI, Swagger at /docs)
+# → http://127.0.0.1:8080/mcp/tools   (MCP endpoint)
 ```
 
-Open the browser — the first model is loaded automatically. Switch models
-from the header dropdown. The workspace has four tabs:
+Open the GUI — the first model is visible immediately. The workspace
+has four tabs: **Graph**, **Query builder**, **Import**, and **Export**.
 
-- **Graph** — interactive force-directed view: datasets, metrics (orange
-  circles) attached to their primary dataset, joins with cardinality
-  labels, semantic views as dashed lavender boxes.
-- **Query builder** — pick metrics and dimensions with a type-ahead
-  picker, add filters, hit **Compile** to generate Teradata SQL or
-  **Compile + Run** to execute and see rows. **EXPLAIN** expands the plan.
-- **Import** — paste YAML/JSON in the left pane, click **Validate** for a
-  dry run or **Validate + Apply** to commit. Per-entity results appear on
-  the right with green / red row accents.
-- **Export** — one-click OSI YAML for the whole model.
+Need to verify DB reachability first? `semantic-catalog ping`.
 
-Click anywhere — a node, a tree item, a search hit — and the right drawer
-fills with Overview / Fields / Metrics / SQL / AI context tabs.
+### Other example scenarios
+
+```bash
+semantic-catalog install-example tpch_osi        # OSI-style TPC-H variant
+semantic-catalog install-example exec_dashboard  # single pre-canned cube
+semantic-catalog install-example school_gradebook # filtered-metrics tour
+```
+
+Teardown: `semantic-catalog uninstall-example <name>` or
+`semantic-catalog uninstall` to drop every catalog table.
+
+---
+
+## Agentic skill — plug an AI agent in
+
+A self-contained Claude skill ships under
+`.claude/skills/semantic-catalog/SKILL.md`. It teaches an agent how to:
+
+- install the catalog on a fresh Teradata;
+- author a semantic model via `/api/import`;
+- answer business questions via the five `semantic.*` MCP tools;
+- interpret the compiler's structured errors (`AMBIGUOUS_PATH`,
+  `CHASM_TRAP`, …).
+
+To use it directly as a Claude Code agent skill, make sure the skill
+directory is on the agent's plugin path.
 
 ---
 
 ## Configuration
 
-The process reads a single required env var:
+| Env var                  | Required | Purpose                                                                 |
+|--------------------------|:--------:|-------------------------------------------------------------------------|
+| `DATABASE_URI`           | ✅        | `teradata://user:pw@host[:port]/database[?opts]`                        |
+| `SEMANTIC_API_TOKEN`     | ❌ (dev)  | Bearer token required on `/api/*` and `/mcp/*` when set                 |
+| `SEMANTIC_MCP_TOKEN`     | ❌        | Legacy alias for `SEMANTIC_API_TOKEN` — kept for deployed configurations |
+| `SC_BIND_HOST`           | ❌        | Listening address (default `127.0.0.1`)                                 |
+| `SC_BIND_PORT`           | ❌        | Listening port (default `8080`)                                         |
+| `SC_CORS_ORIGINS`        | ❌        | Comma-separated CORS allow-list (default `*`)                           |
+| `SC_LOG_LEVEL`           | ❌        | uvicorn log level (default `info`)                                      |
+
+`DATABASE_URI` query-string options are forwarded to
+`teradatasql.connect()`:
 
 ```
-DATABASE_URI=teradata://<user>:<password>@<host>[:<port>]/<database>[?<opts>]
+DATABASE_URI=teradatasql://ldapuser:pw@host/demo_user?logmech=LDAP&tmode=TERA
 ```
 
-Query-string options are forwarded to `teradatasql.connect()`:
+Legacy `TERADATA_HOST` / `TERADATA_USER` / `TERADATA_PASSWORD`
+triad is still honoured if `DATABASE_URI` is absent.
 
-```
-DATABASE_URI=teradatasql://ldapuser:...@host/demo_user?logmech=LDAP&tmode=TERA
-```
-
-Legacy fall-back for environments that predate `DATABASE_URI`:
-
-```
-TERADATA_HOST=host
-TERADATA_USER=user
-TERADATA_PASSWORD=pw
-TERADATA_DATABASE=demo_user
-```
-
-GUI-side knobs (all optional):
-
-| Env var             | Default       | Purpose                               |
-|---------------------|---------------|---------------------------------------|
-| `SC_BIND_HOST`      | `127.0.0.1`   | Listening address                     |
-| `SC_BIND_PORT`      | `8080`        | Listening port                        |
-| `SC_CORS_ORIGINS`   | `*`           | Comma-separated CORS allow-list       |
-| `SC_LOG_LEVEL`      | `info`        | uvicorn log level                     |
+**Security note.** In production always set `SEMANTIC_API_TOKEN` — every
+`/api/*` and `/mcp/*` call then requires `Authorization: Bearer <token>`.
+When the variable is unset the server is trust-by-localhost (dev
+default).
 
 ---
 
 ## CLI
 
 ```
-semantic-catalog serve        # start the web GUI
-semantic-catalog ping         # verify DB connectivity
-semantic-catalog deploy       # deploy bundled .sql files
+semantic-catalog serve                           # start the web GUI + MCP + REST
+semantic-catalog ping                            # verify DB connectivity
+semantic-catalog install [--fresh]               # deploy every catalog DDL and macro
+semantic-catalog uninstall                       # drop every catalog object
+semantic-catalog install-example <name>          # load a bundled scenario
+semantic-catalog uninstall-example <name>        # tear it back down
+semantic-catalog deploy --include <file>...      # low-level escape hatch
 ```
 
-`deploy` ships two modes. `split` breaks a file on `;`+blank-line
-boundaries (for plain DDL/DML). `whole` submits the entire file to the
-driver (for stored procedure and macro bodies that contain `;` inside
-their body).
+`install` is idempotent; add `--fresh` to drop everything first.
+`deploy` is kept as an escape hatch for ad-hoc SQL files — reach for
+`install` / `install-example` first.
 
 ---
 
 ## REST API
 
-The GUI is a thin shell over a REST surface that agents, CI and curl can
-all use directly. All routes are under `/api`:
+Everything under `/api` is JSON; `/mcp` implements the MCP tool
+contract.
 
-| Route                                        | Verb | Purpose                                         |
-|----------------------------------------------|------|-------------------------------------------------|
-| `/api/models`                                | GET  | List semantic models                            |
-| `/api/models/{name}/tree`                    | GET  | Hierarchical catalog (datasets/metrics/views)   |
-| `/api/models/{name}/graph`                   | GET  | Cytoscape-shaped nodes+edges payload            |
-| `/api/search?q=&model=`                      | GET  | Ranked keyword search via `m_semantic_search`   |
-| `/api/describe?entity_type=&entity_name=&model=` | GET | Full attribute pack via `m_semantic_describe`  |
-| `/api/query/compile`                         | POST | Generate Teradata SQL for a metric request      |
-| `/api/query/execute`                         | POST | Compile + execute, return rows                  |
-| `/api/query/explain`                         | POST | Run `EXPLAIN` on arbitrary SQL                  |
-| `/api/import`                                | POST | Parse YAML/JSON and dispatch to `sp_semantic_import` |
-| `/api/import/template`                       | GET  | Minimal example payload                         |
-| `/api/export/osi/{model}`                    | GET  | Export model as OSI 0.1.x YAML                  |
-| `/api/health` · `/api/ping`                  | GET  | Process liveness · DB connectivity              |
+| Route                                   | Verb | Purpose                                  |
+|-----------------------------------------|------|------------------------------------------|
+| `/api/models`                           | GET  | List semantic models                     |
+| `/api/models/{name}/tree`               | GET  | Hierarchical catalog                     |
+| `/api/models/{name}/graph`              | GET  | Cytoscape nodes+edges                    |
+| `/api/search?q=&model=`                 | GET  | Ranked keyword search                    |
+| `/api/describe?entity_type=&entity_name=&model=` | GET | Full attribute pack         |
+| `/api/query/compile`                    | POST | Generate Teradata SQL for a metric request |
+| `/api/query/execute`                    | POST | Compile + execute, return rows           |
+| `/api/query/explain`                    | POST | Run EXPLAIN on the compiled SQL (read-only, single statement) |
+| `/api/import`                           | POST | Load a semantic model (YAML/JSON)        |
+| `/api/import/template`                  | GET  | Minimal example payload                  |
+| `/api/export/osi/{model}`               | GET  | Export model as OSI 0.1.x YAML           |
+| `/api/health` · `/api/ping`             | GET  | Process liveness · DB connectivity       |
+| `/mcp/tools`                            | GET  | MCP tool catalogue                       |
+| `/mcp/tools/{name}`                     | POST | Invoke an MCP tool (`semantic.search`, `semantic.describe`, `semantic.compile`, `semantic.execute`, `semantic.export_osi`) |
 
-Auto-generated Swagger UI at [/docs](http://127.0.0.1:8080/docs).
-
----
-
-## User stories covered
-
-| # | Story                                                                                     | Where it lives                                    |
-|---|-------------------------------------------------------------------------------------------|---------------------------------------------------|
-| 1 | As a business user, navigate the catalog, search, drill from concepts to related concepts | Graph tab + left tree + search + right drawer     |
-| 2 | As a data architect, visualise the full model graph to find gaps                          | Graph tab (force-directed, colour-coded by kind)  |
-| 3 | As an analyst, build a query, EXPLAIN it, run it                                          | Query builder tab                                 |
-| 4 | As a data engineer, import new dimensions/metrics from a YAML/JSON text box               | Import tab → `sp_semantic_import`                 |
+Auto-generated OpenAPI at [/docs](http://127.0.0.1:8080/docs).
 
 ---
 
@@ -155,45 +177,45 @@ Auto-generated Swagger UI at [/docs](http://127.0.0.1:8080/docs).
 ```
 ┌──────────────────────── Browser ────────────────────────┐
 │  index.html · app.js · style.css                        │
-│    Cytoscape.js (fcose)  │  plain ES (no build step)    │
+│  Cytoscape.js (fcose)  │  plain ES (no build step)      │
 └──────────────────────────────┬──────────────────────────┘
                                │  fetch /api/…
-┌──────────────────────── FastAPI ────────────────────────┐
-│  catalog.py   — models / tree / graph / search / describe
-│  query.py     — compile / execute / explain              │
-│  importer.py  — YAML → ordered calls → sp_semantic_import│
-│  export.py    — OSI YAML projection                      │
-│  db.py        — bounded ConnectionPool over teradatasql  │
+┌──────────────────────── FastAPI process ────────────────┐
+│  auth.py     — shared bearer-token gate                 │
+│  api/        — models/tree/graph/search/describe/       │
+│                query/import/export                      │
+│  mcp/        — MCP tool endpoints (/mcp/tools/*)        │
+│  compiler/   — pure-Python: resolver, joins, render      │
+│  importer/   — pure-Python: YAML → catalog writes        │
+│  exporter/   — pure-Python: catalog → OSI YAML           │
+│  db.py       — bounded ConnectionPool over teradatasql   │
 └──────────────────────────────┬──────────────────────────┘
                                │  teradatasql
 ┌──────────────────── Teradata Vantage ───────────────────┐
-│  SEMANTIC_MODEL / DATASET / FIELD / METRIC / …           │
-│  m_semantic_search · m_semantic_describe (macros)        │
-│  sp_semantic_request · sp_semantic_import (procs)        │
+│  SEMANTIC_MODEL / DATASET / FIELD / METRIC / ...         │
+│  sp_semantic_search · sp_semantic_describe (macros)      │
 └─────────────────────────────────────────────────────────┘
 ```
 
-- **No ORM, no background worker.** Synchronous teradatasql driver, tiny
-  pool, all real work happens in SQL.
-- **No build step.** Frontend is three files — HTML, CSS, ES5+ JS — loaded
-  via CDN for Cytoscape. Runs in any modern browser.
-- **Transactional import.** The server wraps the import batch in one
-  transaction and commits only if every entity validates; dry-run
-  rolls back unconditionally.
+- **No ORM, no background worker.** Synchronous teradatasql driver, a
+  tiny pool, sqlglot for dialect rendering.
+- **No build step.** Frontend is three files — HTML, CSS, ES5+ JS.
+- **Transactional import.** Every `POST /api/import` call wraps its
+  batch in a single Teradata transaction; any failure rolls back the
+  whole load.
 
 See [`sql_compilation_engine_design.md`](./sql_compilation_engine_design.md)
 for the query-compilation internals and
-[`semantic_catalog_design_v2.md`](./semantic_catalog_design_v2.md) for the
-conceptual ontology.
+[`semantic_catalog_design_v2.md`](./semantic_catalog_design_v2.md) for
+the conceptual ontology.
 
 ---
 
 ## Import format
 
-YAML or JSON, any subset of these top-level keys:
+YAML or JSON. Any subset of these top-level keys:
 
 ```yaml
-model: tpch_orders                      # target model (used for all items below)
 models:
   - {name, description, owner_user, owner_group}
 datasets:
@@ -214,6 +236,10 @@ metrics:
     expressions:
       TERADATA: "SUM(l_extendedprice * (1 - l_discount))"
       ANSI_SQL: "SUM(l_extendedprice * (1 - l_discount))"
+    # Phase-1: filtered rollups of a base metric.
+    # base_metric: revenue
+    # filters:
+    #   - {field: part.p_type, op: LIKE, filter_value: "'PROMO%'"}
 relationships:
   - name: order_to_customer
     from: orders
@@ -224,10 +250,9 @@ relationships:
 views:
   - name: order_dashboard
     primary_dataset: orders
-    timeseries_field: o_orderdate
     members:
-      - {ordinal: 1, name: total_revenue, member_type: MEASURE, metric: revenue}
-      - {ordinal: 2, name: order_date,    member_type: TIME_DIMENSION,
+      - {ordinal: 1, name: total_revenue, member_type: METRIC, metric: revenue}
+      - {ordinal: 2, name: order_date,    member_type: DIMENSION,
          parent_dataset: orders, field: o_orderdate}
 ai_context:
   - entity_type: METRIC
@@ -237,18 +262,10 @@ ai_context:
     display_name: Revenue
 ```
 
-The backend decomposes the document into one
-`sp_semantic_import(model, kind, payload)` call per entity, in topological
-order, inside a single Teradata transaction. Any error rolls back the
-whole batch; dry-run rolls back unconditionally and returns a per-item
-report.
-
----
-
-## Export format
-
-- **OSI 0.1.x YAML** — full model projection (datasets, fields,
-  relationships, metrics, AI context). See `GET /api/export/osi/{model}`.
+The backend decomposes the document into a topologically ordered stream
+of per-entity writes inside a single Teradata transaction. Any error
+rolls back the whole batch; `dry_run: true` rolls back unconditionally
+and returns a per-item report.
 
 ---
 
@@ -256,6 +273,7 @@ report.
 
 ```bash
 # Unit tests (no DB required):
+pip install ".[dev]"
 pytest
 
 # Plus live smoke tests against a real Teradata:
@@ -263,20 +281,18 @@ export DATABASE_URI="teradata://demo_user:demo_user@host/demo_user"
 pytest -m ""                # run everything, including `live` marker
 ```
 
-The test layout:
+| File                            | What it covers                                          |
+|---------------------------------|---------------------------------------------------------|
+| `test_config.py`                | `DATABASE_URI` parsing, legacy fallback                 |
+| `test_importer_parsing.py`      | YAML → topological call sequence                        |
+| `test_query_encoding.py`        | Filter/sort value encoding                              |
+| `test_api_fake.py`              | FastAPI routers against an in-memory fake pool          |
+| `test_import_api.py`            | Commit / rollback semantics for the import batch        |
+| `test_live_smoke.py`            | End-to-end against a real Teradata (DB-dependent)       |
+| `tests/run_tests.py` + `cases/` | YAML-driven regression suite for the compiler           |
 
-| File                            | What it covers                                           |
-|---------------------------------|----------------------------------------------------------|
-| `test_config.py`                | `DATABASE_URI` parsing, legacy fallback                  |
-| `test_importer_parsing.py`      | YAML → topological call sequence                         |
-| `test_query_encoding.py`        | Filter/sort value encoding for `sp_semantic_request`     |
-| `test_api_fake.py`              | FastAPI routers against an in-memory fake pool           |
-| `test_import_api.py`            | Commit / rollback semantics for the import batch         |
-| `test_live_smoke.py`            | End-to-end against a real Teradata (DB-dependent)        |
-| `tests/run_tests.py` + `cases/` | YAML-driven regression suite for `sp_semantic_request`   |
-
-`test_live_smoke.py` auto-skips when the DB is unreachable, so a `pytest`
-invocation on a laptop with no Teradata still passes cleanly.
+`test_live_smoke.py` auto-skips when the DB is unreachable, so
+`pytest` on a laptop with no Teradata still passes cleanly.
 
 ---
 
@@ -288,11 +304,12 @@ UI follows the Teradata visual identity:
 - Inter typeface (loaded from Google Fonts); JetBrains Mono for code.
 - Logo is the officially provided PNG — never recreated.
 
-See `.claude/skills/teradata-brand/SKILL.md` for the full guidelines the
-UI follows.
+See `.claude/skills/teradata-brand/SKILL.md` for the full guidelines
+the UI follows.
 
 ---
 
 ## License
 
-Apache 2.0. See `LICENSE`.
+Apache 2.0. See `LICENSE` (or the declaration in `pyproject.toml` until
+the file lands on disk).

@@ -59,7 +59,7 @@ All config comes from environment variables. The CLI reads them on startup.
 | `BIND_HOST`             | `127.0.0.1`                 | ASGI bind address. Use `0.0.0.0` behind a reverse proxy |
 | `BIND_PORT`             | `8080`                      |                                                        |
 | `CORS_ALLOW_ORIGINS`    | `*`                         | Comma-separated list                                   |
-| `SEMANTIC_MCP_TOKEN`    | *(unset = no auth)*         | Bearer token required on every `/mcp/*` request        |
+| `SEMANTIC_API_TOKEN`    | *(unset = no auth)*         | Bearer token required on every `/api/*` and `/mcp/*` request. `SEMANTIC_MCP_TOKEN` is still accepted as a legacy alias. |
 | `TQ_LOGMECH`            | `TD2`                       | Forwarded to the `tq` client for ad-hoc queries        |
 
 ### Example `.env` (dev)
@@ -113,30 +113,27 @@ For a surgical re-deploy of specific files:
 
 ```bash
 semantic-catalog deploy --mode split --include 04_ddl_metrics 05a_ddl_hierarchies
-semantic-catalog deploy --mode whole --include 33_sp_semantic_request
+semantic-catalog deploy --mode whole --include 30_sp_semantic_search
 ```
 
 `--mode split` is for DDL files (one statement per semicolon); `--mode whole` is for stored procedures and macros (submitted as a single statement).
 
 ---
 
-## Compile engines
+## The compiler
 
-From v0.3, two engines are available:
-
-| Engine       | Default | Location                  | Deprecation                |
-|--------------|:-------:|---------------------------|----------------------------|
-| **python**   | ✅      | `semantic_catalog.compiler` | —                         |
-| **sql**      |         | `sp_semantic_request` SP  | Scheduled for v0.4 removal |
-
-Select via query parameter:
+Compilation, filtered-metric composition, join resolution, and SQL
+rendering all run in-process in `semantic_catalog.compiler` (pure
+Python with `sqlglot` for dialect emission). The older
+`sp_semantic_request` SPL compiler has been retired and is no longer
+deployed — the `sql/33_sp_semantic_request.sql` file remains on disk
+for archival only.
 
 ```bash
-POST /api/query/compile?engine=python   # default
-POST /api/query/compile?engine=sql      # legacy SP
+POST /api/query/compile   # compile to SQL
+POST /api/query/execute   # compile + execute, returns rows
+POST /api/query/explain   # read-only EXPLAIN on the compiled SQL
 ```
-
-The Python engine is **32/32 at parity** with the SP on the shipped regression suite, plus strictly more features (metric-in-metric via `${name}`).
 
 ---
 
@@ -170,13 +167,7 @@ export SEMANTIC_MCP_TOKEN="$(openssl rand -hex 32)"
 semantic-catalog serve
 ```
 
-When set, every `/mcp/*` request must include `Authorization: Bearer <token>`. When unset, no auth is applied (dev default — safe because the default bind is localhost).
-
-### Alternative: external MCP server
-
-If you prefer a dedicated MCP server process, the repo ships tool definitions for [teradata-mcp-server](https://github.com/Teradata/teradata-mcp-server) in `mcp/`. Three personas (`admin`, `analyst`, `guided`) cover typical trust levels. The external server talks to Teradata directly via its own connection pool.
-
-Both options can run concurrently — they share the same catalog tables.
+When set, every `/api/*` and `/mcp/*` request must include `Authorization: Bearer <token>`. When unset, no auth is applied (dev default — safe because the default bind is localhost). Use `SEMANTIC_API_TOKEN`; `SEMANTIC_MCP_TOKEN` is still honoured for backwards compatibility.
 
 ---
 
@@ -191,7 +182,6 @@ Both options can run concurrently — they share the same catalog tables.
 
 - **The process is stateless.** Run N replicas behind a load balancer; add/remove capacity without drain.
 - **The Python compiler holds no catalog cache.** Every request rereads what it needs from Teradata — bounded by 5–15 single-row lookups per compile (model, dataset, metric, relationship).
-- **GTT isolation is per-session.** The legacy SP path uses Teradata GLOBAL TEMPORARY TABLES for its scratchpad; each connection gets its own materialised view, so concurrent users never interfere.
 
 ### Rate limiting
 

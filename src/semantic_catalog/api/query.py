@@ -268,20 +268,44 @@ def _compile_sql(req: QueryRequest, *, execute: bool) -> QueryResponse:
     )
 
 
+_EXPLAIN_LEAD = ("select", "with", "locking")
+_EXPLAIN_FORBIDDEN = ("insert ", "update ", "delete ", "merge ",
+                     "create ", "drop ", "alter ", "grant ", "revoke ",
+                     "replace ", "call ", "exec ", "execute ")
+
+
 @router.post("/explain", response_model=ExplainResponse)
 def explain(req: ExplainRequest):
-    sql = (req.sql or "").strip().rstrip(";")
+    """Run EXPLAIN on a read-only statement.
+
+    Security posture: this endpoint executes EXPLAIN on caller-supplied
+    SQL, so we gate it tightly — single statement, must start with a
+    read-only verb, no DDL/DML keywords anywhere. Internal server errors
+    are logged but not echoed back to the caller.
+    """
+    sql = (req.sql or "").strip()
+    while sql.endswith(";"):
+        sql = sql[:-1].rstrip()
     if not sql:
         raise HTTPException(400, "sql is required")
+    # reject multi-statement submissions
+    if ";" in sql:
+        raise HTTPException(400, "only a single statement is allowed")
+    normalised = sql.lower()
+    if not normalised.startswith(_EXPLAIN_LEAD):
+        raise HTTPException(
+            400, "only SELECT / WITH / LOCKING statements may be EXPLAINed"
+        )
+    if any(kw in normalised for kw in _EXPLAIN_FORBIDDEN):
+        raise HTTPException(400, "DDL/DML keywords are not permitted")
+
     lines: List[str] = []
-    ok = True
-    err: Optional[str] = None
     try:
         with get_pool().cursor() as cur:
             cur.execute(f"EXPLAIN {sql}")
             for r in cur.fetchall() or []:
                 lines.append(str(r[0]))
-    except Exception as e:
-        ok = False
-        err = str(e)
-    return ExplainResponse(plan="\n".join(lines), ok=ok, message=err)
+    except Exception:  # noqa: BLE001
+        log.exception("explain failed")
+        return ExplainResponse(plan="", ok=False, message="EXPLAIN failed; see server log")
+    return ExplainResponse(plan="\n".join(lines), ok=True, message=None)

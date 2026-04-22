@@ -1,0 +1,5 @@
+{
+  "name": "semantic-catalog",
+  "description": "Teradata Semantic Catalog — governed SQL over Teradata via embedded MCP, REST, and GUI",
+  "version": "1.0.0"
+}

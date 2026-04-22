@@ -68,9 +68,9 @@ Desktop.ini
 *.env.local
 secrets.json
 
-# Claude local settings (kept: skills/, settings shared with the repo)
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+# Claude local workspace — installed skills + local settings.
+# Distributed copies live under agentic/ (skills) and agentic/.claude-plugin/.
+.claude/
 
 # Generated test artefacts
 tests/.pytest_cache/

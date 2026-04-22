@@ -86,7 +86,9 @@ Teardown: `semantic-catalog uninstall-example <name>` or
 ## Agentic skill — plug an AI agent in
 
 A self-contained Claude skill ships under
-`.claude/skills/semantic-catalog/SKILL.md`. It teaches an agent how to:
+`agentic/skills/semantic-catalog/SKILL.md`, with a matching
+`agentic/.claude-plugin/plugin.json` so the directory is directly
+installable as a Claude Code plugin. It teaches an agent how to:
 
 - install the catalog on a fresh Teradata;
 - author a semantic model via `/api/import`;
@@ -94,8 +96,9 @@ A self-contained Claude skill ships under
 - interpret the compiler's structured errors (`AMBIGUOUS_PATH`,
   `CHASM_TRAP`, …).
 
-To use it directly as a Claude Code agent skill, make sure the skill
-directory is on the agent's plugin path.
+Install as a Claude Code plugin by pointing at the `agentic/` root, or
+copy `agentic/skills/semantic-catalog/` into any other agent's skill
+directory.
 
 ---
 
@@ -303,9 +306,6 @@ UI follows the Teradata visual identity:
 - Primary Orange `#FF5F02`, Navy `#00233C`, white space as structure.
 - Inter typeface (loaded from Google Fonts); JetBrains Mono for code.
 - Logo is the officially provided PNG — never recreated.
-
-See `.claude/skills/teradata-brand/SKILL.md` for the full guidelines
-the UI follows.
 
 ---
 

@@ -31,8 +31,6 @@ Operational guide for the `semantic-catalog serve` FastAPI process. Covers confi
                         │   — catalog tables       │
                         │   — sp_semantic_search   │
                         │   — sp_semantic_describe │
-                        │   — sp_semantic_request  │
-                        │     (legacy, engine=sql) │
                         └──────────────────────────┘
 ```
 
@@ -125,9 +123,8 @@ semantic-catalog deploy --mode whole --include 30_sp_semantic_search
 Compilation, filtered-metric composition, join resolution, and SQL
 rendering all run in-process in `semantic_catalog.compiler` (pure
 Python with `sqlglot` for dialect emission). The older
-`sp_semantic_request` SPL compiler has been retired and is no longer
-deployed — the `sql/33_sp_semantic_request.sql` file remains on disk
-for archival only.
+`sp_semantic_request` SPL compiler was retired in v0.4 and has been
+removed from the SQL bundle entirely.
 
 ```bash
 POST /api/query/compile   # compile to SQL

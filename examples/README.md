@@ -54,6 +54,7 @@ You do not need these examples to use the catalog. For a real deployment:
 
 1. `semantic-catalog install` — deploy the core DDL and stored procedures.
 2. Load your own metadata via `POST /api/import` (GUI) or the
-   `sp_semantic_import` stored procedure.
+   `semantic.export_osi`/`/api/import` round-trip (pure-Python importer
+   since v0.4).
 
 Use these examples as reference payloads when you're writing your own.

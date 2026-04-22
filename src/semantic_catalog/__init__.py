@@ -6,4 +6,4 @@ Public entry points:
     semantic_catalog.config.Settings       — parsed environment settings
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.0"

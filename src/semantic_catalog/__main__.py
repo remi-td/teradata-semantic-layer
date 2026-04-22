@@ -268,7 +268,13 @@ def _detect_mode(text: str) -> str:
 
 
 def _cmd_install(args: argparse.Namespace) -> int:
-    """Deploy the core catalog (DDL + SPs + idempotent schema extensions)."""
+    """Deploy the core catalog (DDL + macros + idempotent schema extensions).
+
+    With ``--with-sample NAME`` (or the alias ``--with-sample`` without a
+    name, which defaults to ``school_gradebook``), also deploys the
+    matching example after the core catalog lands so the GUI isn't empty
+    on first run.
+    """
     import teradatasql
     from .config import load_settings
     settings = load_settings()
@@ -292,12 +298,36 @@ def _cmd_install(args: argparse.Namespace) -> int:
         if failures and args.stop_on_error:
             break
 
+    sample = getattr(args, "with_sample", None)
+    if sample and not failures:
+        ex_dir = _examples_dir() / sample
+        if not ex_dir.is_dir():
+            print(f"[install] --with-sample {sample}: example not found at "
+                  f"{ex_dir} — skipping", file=sys.stderr)
+        else:
+            print(f"[install] --with-sample: deploying example '{sample}'")
+            files = sorted(p for p in ex_dir.glob("*.sql")
+                           if p.is_file() and p.name != "teardown.sql")
+            for f in files:
+                text = _render_sql(f.read_text(), settings.catalog_db)
+                mode = _detect_mode(text)
+                print(f"=> {sample}/{f.name} ({mode})")
+                try:
+                    _submit_sql_file(cur, text, mode=mode)
+                    print("   ok")
+                except Exception as e:  # noqa: BLE001
+                    failures += 1
+                    print(f"   FAILED: {e}", file=sys.stderr)
+                    if args.stop_on_error:
+                        break
+
     cur.close()
     conn.close()
     if failures:
         print(f"[install] {failures} failure(s)", file=sys.stderr)
         return 1
-    print("[install] core catalog deployed")
+    print("[install] core catalog deployed"
+          + (f" (+ sample: {sample})" if sample else ""))
     return 0
 
 
@@ -410,6 +440,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp_install.add_argument(
         "--fresh", action="store_true",
         help="Run 00_drop_all.sql first so install starts from a clean slate",
+    )
+    sp_install.add_argument(
+        "--with-sample",
+        nargs="?",
+        const="school_gradebook",
+        default=None,
+        dest="with_sample",
+        metavar="NAME",
+        help=(
+            "Deploy a bundled example after the core catalog "
+            "(default: school_gradebook). Use without NAME to pick the default; "
+            "pass a name to choose a specific example."
+        ),
     )
     sp_install.add_argument("--stop-on-error", action="store_true")
     sp_install.set_defaults(func=_cmd_install)

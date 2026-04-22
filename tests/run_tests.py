@@ -57,7 +57,11 @@ import teradatasql
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "src"))
 
-from semantic_catalog.api.models import QueryFilter, QueryRequest, QuerySort  # noqa: E402
+from semantic_catalog.compiler.request import (  # noqa: E402
+    CompileFilter as QueryFilter,
+    CompileRequest as QueryRequest,
+    CompileSort as QuerySort,
+)
 from semantic_catalog.compiler import DbCatalog, compile as py_compile, render  # noqa: E402
 from semantic_catalog.compiler.errors import CompileError  # noqa: E402
 
@@ -138,27 +142,9 @@ def rows_equal(cols_a, a, cols_b, b):
 
 # ---------------------------------------------------------------- DB ops
 
-def call_compile(cur, req):
-    """Legacy SP compile — calls demo_user.sp_semantic_request."""
-    cur.execute(
-        f"CALL {CATALOG_DB}.sp_semantic_request(?,?,?,?,?,?,?,?,?,?,?,?)",
-        (
-            req.get("model", ""),
-            req.get("metrics", ""),
-            req.get("dimensions", ""),
-            req.get("where", ""),
-            req.get("having", ""),
-            req.get("sort", ""),
-            int(req.get("limit", 0) or 0),
-            None, None, None, None, None,
-        )
-    )
-    r = cur.fetchone()
-    if not r:
-        return dict(sql=None, is_valid=None, message="no result row",
-                    anchor=None, joined=None)
-    return dict(sql=r[0], is_valid=int(r[1]) if r[1] is not None else None,
-                message=r[2], anchor=r[3], joined=r[4])
+# The legacy ``call_compile`` (SP path) was removed in v0.4 together
+# with ``sp_semantic_request``. The Python compiler is the only engine
+# the runner knows about now.
 
 
 # ------- Python compiler path ----------------------------------------
@@ -252,9 +238,12 @@ def call_compile_python(cur, req):
 
 
 def compile_for_engine(engine: str, cur, req):
-    if engine == "python":
-        return call_compile_python(cur, req)
-    return call_compile(cur, req)
+    if engine != "python":
+        raise ValueError(
+            f"engine={engine!r} is no longer supported; the SPL compiler was "
+            f"retired in v0.4. Pass --engine python (default)."
+        )
+    return call_compile_python(cur, req)
 
 
 def run_sql(cur, sql):
@@ -290,7 +279,7 @@ def load_cases(cases_dir, name_filter=None, only=None):
 
 # ---------------------------------------------------------------- runner
 
-def run_one(cur, c, label_idx, engine="sql"):
+def run_one(cur, c, label_idx, engine="python"):
     cid = c.get("id", f"T{label_idx:02d}")
     title = c.get("title", "")
     print(f"\n### {cid} — {title} _(engine={engine})_\n")
@@ -389,8 +378,8 @@ def main():
                     help="substring filter on id/category/file")
     ap.add_argument("--only", default=None, help="exact id match")
     ap.add_argument("--report", default=str(DEFAULT_REPORT), help="report path")
-    ap.add_argument("--engine", default="sql", choices=("sql", "python", "both"),
-                    help="compile engine: SP (legacy), Python (v0.3 default), or both")
+    ap.add_argument("--engine", default="python", choices=("python",),
+                    help="compile engine; 'python' is the only option since v0.4")
     args = ap.parse_args()
 
     cases = load_cases(CASES_DIR, args.filter, args.only)
@@ -401,7 +390,7 @@ def main():
     report_fh = open(args.report, "w")
     sys.stdout = Tee(sys.__stdout__, report_fh)
 
-    engines = (["sql", "python"] if args.engine == "both" else [args.engine])
+    engines = [args.engine]
 
     print(f"# Test Results — Teradata Semantic Catalog\n")
     print(f"- Run against `{USER}@{HOST}`")

@@ -35,9 +35,10 @@ The catalog stores four things per model:
 On top of those, `SEMANTIC_VIEW` + `VIEW_MEMBER` curate a consumer-facing
 projection; `AI_CONTEXT`, `FORMAT_SPEC`, etc. attach soft metadata.
 
-`sp_semantic_request` is the compiler. Given a request shape
+The in-process Python compiler (`semantic_catalog.compiler`) is the
+engine. Given a request shape
 `{model, metrics[], dimensions[], where[], having[], sort, limit}` it
-returns fully-formed Teradata SQL.
+resolves, joins, and renders fully-formed Teradata SQL.
 
 ---
 

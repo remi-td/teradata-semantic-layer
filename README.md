@@ -41,41 +41,37 @@ Read `semantic_catalog_design_v2.md` for the ontology and
 
 ---
 
-## Quickstart (five commands)
+## Quickstart (three commands)
 
 ```bash
-# 1. Clone + install
-git clone https://github.com/remi-td/semantic-catalog.git
-cd semantic-catalog
-pip install .
-
-# 2. Point at a Teradata
+# 1. Install + point at a Teradata
+pip install semantic-catalog
 export DATABASE_URI="teradata://user:password@host:1025/demo_user"
 
-# 3. Deploy the catalog objects (one command, every DDL + macro)
-semantic-catalog install
+# 2. Deploy the catalog + a pre-seeded demo model in one shot
+semantic-catalog install --with-sample            # defaults to school_gradebook
 
-# 4. Load a ready-made demo (TPC-H order analytics)
-semantic-catalog install-example tpch_physical   # sample data
-semantic-catalog install-example tpch_orders     # Honeydew-style model
-
-# 5. Launch the GUI + MCP server
+# 3. Launch the GUI + REST + MCP server
 semantic-catalog serve
-# → http://127.0.0.1:8080   (GUI, Swagger at /docs)
-# → http://127.0.0.1:8080/mcp/tools   (MCP endpoint)
+# → http://127.0.0.1:8080           (GUI, Swagger at /docs)
+# → http://127.0.0.1:8080/mcp/tools (MCP endpoint)
 ```
 
-Open the GUI — the first model is visible immediately. The workspace
+Open the GUI — the seeded model is visible immediately. The workspace
 has four tabs: **Graph**, **Query builder**, **Import**, and **Export**.
 
 Need to verify DB reachability first? `semantic-catalog ping`.
 
+> Prefer source? Replace step 1 with `git clone … && cd semantic-catalog && pip install .`.
+
 ### Other example scenarios
 
 ```bash
+semantic-catalog install-example tpch_physical   # sample data for tpch_orders
+semantic-catalog install-example tpch_orders     # Honeydew-style model
 semantic-catalog install-example tpch_osi        # OSI-style TPC-H variant
 semantic-catalog install-example exec_dashboard  # single pre-canned cube
-semantic-catalog install-example school_gradebook # filtered-metrics tour
+semantic-catalog install-example school_gradebook # filtered-metrics tour (the --with-sample default)
 ```
 
 Teardown: `semantic-catalog uninstall-example <name>` or

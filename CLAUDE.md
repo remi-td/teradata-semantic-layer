@@ -6,51 +6,57 @@ was used to bootstrap the repo and remains here for reference.
 
 ---
 
-## Current state (sprint 1 shipped)
+## Current state (v0.4)
 
 The catalog ships as a Python package **`semantic-catalog`** with a
-FastAPI-backed web GUI and a bundled SQL deployment of all catalog
-objects + sample scenarios.
+FastAPI-backed web GUI, a pure-Python compiler/importer/exporter, and
+an embedded MCP server. The SQL bundle is DDL + the two macros that
+back `semantic.search` / `semantic.describe` — no SQL compiler, no SQL
+importer, since v0.4.
 
 ### Layout
 
 ```
 src/semantic_catalog/
   __init__.py         — version
-  __main__.py         — `semantic-catalog {serve|deploy|ping}`
+  __main__.py         — `semantic-catalog {serve|install|install-example|ping|deploy}`
+  auth.py             — shared bearer-token dependency (SEMANTIC_API_TOKEN)
   config.py           — DATABASE_URI parsing (Settings dataclass)
   db.py               — ConnectionPool singleton over teradatasql
   server.py           — FastAPI create_app()
   api/
     catalog.py        — /api/models, /tree, /graph, /search, /describe
     query.py          — /api/query/{compile,execute,explain}
-    importer.py       — /api/import (YAML → sp_semantic_import, 1-per-entity)
+    importer.py       — /api/import (YAML → pure-Python writer, 1-per-entity)
     export.py         — /api/export/osi
-    models.py         — Pydantic request/response types
-  static/
-    index.html        — single-page UI (three panes)
-    app.js            — plain ES, Cytoscape.js via CDN
-    style.css         — Teradata-branded stylesheet
-    assets/           — logo PNGs (from the teradata-brand skill)
-  sql_bundle/         — all .sql files shipped with the package
-sql/                  — canonical source SQL (symlink-style mirror of sql_bundle/)
+    models.py         — Pydantic transport types (no compiler imports)
+  compiler/           — pure-Python compile pipeline
+    request.py        — CompileRequest / CompileFilter / CompileSort dataclasses
+    resolver.py       — tokens + catalog → LogicalPlan
+    joins.py          — BFS + chasm detection
+    render.py         — LogicalPlan → sqlglot → Teradata SQL
+    db_catalog.py     — DbCatalog DAO over teradatasql
+    orchestrator.py   — compile(req, catalog) entry point
+  importer/           — pure-Python catalog writer (replaces sp_semantic_import)
+  exporter/           — OSI YAML emitter
+  mcp/                — embedded MCP tools (/mcp/tools/*)
+  static/             — single-page GUI
+  sql_bundle/         — DDL + sp_semantic_search + sp_semantic_describe only
+sql/                  — canonical source SQL (mirrors sql_bundle/)
+agentic/              — published agent skill + Claude Code plugin manifest
 tests/                — pytest suite (unit + live-smoke)
 ```
 
 ### SQL artefacts worth knowing
 
-- `sql/60_sp_semantic_import.sql` — single-entity import SP used by the GUI.
-  Accepts `(model, kind, payload_json, OUT status, OUT message, OUT entity_id)`.
-  Kinds: `MODEL|DATASET|FIELD|METRIC|METRIC_EXPR|RELATIONSHIP|REL_COL|VIEW|VIEW_MEMBER|AI_CONTEXT`.
 - `sql/30_sp_semantic_search.sql` + `31_sp_semantic_describe.sql` — agent-facing macros.
-- `sql/33_sp_semantic_request.sql` — the compiler. Returns results via OUT
-  parameters (`p_compiled_sql`, `p_is_valid`, `p_validation_message`,
-  `p_anchor_dataset`, `p_joined_datasets`) — no shared result table.
-- `sql/32_request_staging.sql` — **GLOBAL TEMPORARY TABLE** definitions for
-  the compiler's scratchpad (`request_required_ds`, `request_join_step`,
-  `request_metric`, `request_dimension`, `request_filter`, `request_grain`).
-  GTTs so each session has its own materialised instance; the compiler is
-  safe under 100s of concurrent users with zero cross-session locking.
+- Everything in the `02_ddl_*` / `04_ddl_*` / `05_ddl_*` range — the
+  catalog's table schema. The `SECURITY_POLICY` table is declared here
+  but not yet consumed by the compiler (RLS plumbing is a Sprint-3 item).
+- Legacy stored procs (`sp_semantic_request`, `sp_semantic_import`) and
+  their GTTs (`32_request_staging`, `19_gtt_yaml_tmp`) were removed in
+  v0.4. Don't re-introduce them; the compiler and importer are pure
+  Python and that's the product.
 
 ### Frontend choices (don't change without a reason)
 
@@ -64,16 +70,18 @@ tests/                — pytest suite (unit + live-smoke)
 ### Common workflows
 
 ```
-# deploy catalog + samples
-semantic-catalog deploy --mode split --include <schema files>
-semantic-catalog deploy --mode whole --include 60_sp_semantic_import
+# deploy the catalog (DDL + macros; idempotent)
+DATABASE_URI=teradata://user:pw@host/demo_user semantic-catalog install
 
-# run the GUI
-DATABASE_URI=teradata://user:pw@host/demo_user semantic-catalog serve
+# load a pre-built sample model
+semantic-catalog install-example tpch_orders
+
+# run the GUI + REST + MCP (one process)
+SEMANTIC_API_TOKEN=$(openssl rand -hex 32) semantic-catalog serve
 
 # run tests (live tests auto-skip if DB unreachable)
 pytest
-DATABASE_URI=... pytest      # runs the live/smoke suite too
+DATABASE_URI=... pytest -m live    # includes live/smoke suite
 ```
 
 ### Known conventions
@@ -87,8 +95,8 @@ DATABASE_URI=... pytest      # runs the live/smoke suite too
 - DBC metadata is inconsistent: `dbc.TablesV.DataBaseName` (capital B) vs
   `dbc.ColumnsV.DatabaseName` (lower b). The catalog faithfully mirrors that.
 - `DBC.SysExecSQL` is NOT callable from `demo_user` on the ClearScape sandbox —
-  don't design EXPLAIN validators that rely on it. `sp_semantic_request` handles
-  this by deferring EXPLAIN to direct driver invocation at the API layer.
+  don't design EXPLAIN validators that rely on it. `/api/query/explain`
+  handles this by running EXPLAIN directly from the driver instead.
 - FastAPI + Pydantic v2 complains about `model_name` collisions ("protected
   namespace `model_`"). All the API Pydantic models set `model_config =
   ConfigDict(protected_namespaces=())` to silence this.
@@ -101,9 +109,9 @@ DATABASE_URI=... pytest      # runs the live/smoke suite too
 - `test_api_fake.py` — FastAPI routes against an in-memory FakePool.
 - `test_import_api.py` — commit/rollback semantics.
 - `test_live_smoke.py` — end-to-end against a real Teradata (marker: `live`).
-- `tests/run_tests.py` + `cases/*.yaml` — YAML-driven regression for `sp_semantic_request`.
+- `tests/run_tests.py` + `cases/*.yaml` — YAML-driven regression harness (live DB). Calls the Python compiler since v0.4.
 
-43 tests pass with DB reachable, 37 pass without.
+112 tests pass without DB; the live/smoke suite adds ~8 more when DATABASE_URI points at a reachable Teradata.
 
 ---
 

@@ -21,10 +21,10 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from ..api.models import QueryRequest
 from ..auth import require_token
 from ..compiler import DbCatalog, compile as py_compile, render
 from ..compiler.errors import CompileError
+from ..compiler.request import from_mapping as _to_compile_request
 from ..db import get_pool
 from ..exporter import export_osi_yaml
 
@@ -175,7 +175,7 @@ def tool_compile(args: Dict[str, Any]) -> Dict[str, Any]:
     request_payload = (args or {}).get("request")
     if not isinstance(request_payload, dict):
         raise HTTPException(400, "request must be a mapping")
-    req = QueryRequest.model_validate(request_payload)
+    req = _to_compile_request(request_payload)
     db = _db_name()
     with get_pool().cursor() as cur:
         catalog = DbCatalog(cur, catalog_db=db)
@@ -201,7 +201,7 @@ def tool_execute(args: Dict[str, Any]) -> Dict[str, Any]:
     request_payload = (args or {}).get("request")
     if not isinstance(request_payload, dict):
         raise HTTPException(400, "request must be a mapping")
-    req = QueryRequest.model_validate(request_payload)
+    req = _to_compile_request(request_payload)
     db = _db_name()
     with get_pool().cursor() as cur:
         catalog = DbCatalog(cur, catalog_db=db)

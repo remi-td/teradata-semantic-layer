@@ -1,50 +1,111 @@
-"""Value encoding for the query builder — mirrors tests/client.py expectations."""
+"""Value encoding for filter right-hand sides.
+
+Pre-v0.4 this file exercised the packed-string wire format used by the
+stored-procedure compiler (``sp_semantic_request``). That path has been
+removed; the Python compiler now calls ``compiler.encoding.encode_value``
+and ``resolver._encode_filter_rhs`` directly.
+
+The tests below cover:
+
+    - ``encode_value`` quoting rules across STRING / NUMBER / DATE / RAW
+    - ``encode_in`` tuple shape
+    - The ``_encode_filter_rhs`` RAW gate — conservative regex allow-list
+"""
 from __future__ import annotations
 
 import pytest
 
-from semantic_catalog.api.models import QueryFilter, QuerySort
-from semantic_catalog.api.query import _pack_where, _pack_having, _pack_sort
+from semantic_catalog.compiler.encoding import encode_in, encode_value
+from semantic_catalog.compiler.errors import CompileError
+from semantic_catalog.compiler.request import CompileFilter
+from semantic_catalog.compiler.resolver import _encode_filter_rhs
 
+
+# ----------- encode_value ------------
 
 def test_numeric_value_unquoted():
-    w = [QueryFilter(field="d.f", op=">", value=10)]
-    assert _pack_where(w) == "d.f|>|10"
+    assert encode_value(10) == "10"
 
 
 def test_string_value_quoted_and_escaped():
-    w = [QueryFilter(field="d.f", op="=", value="O'Brien")]
-    assert _pack_where(w) == "d.f|=|'O''Brien'"
+    assert encode_value("O'Brien") == "'O''Brien'"
 
 
 def test_date_hint_wraps_with_DATE_literal():
-    w = [QueryFilter(field="d.dt", op=">=", value="1995-01-01", type="DATE")]
-    assert _pack_where(w) == "d.dt|>=|DATE '1995-01-01'"
+    assert encode_value("1995-01-01", "DATE") == "DATE '1995-01-01'"
 
+
+def test_number_hint_does_not_quote():
+    assert encode_value("1000", "NUMBER") == "1000"
+
+
+def test_raw_hint_returns_verbatim():
+    assert encode_value("CURRENT_DATE", "RAW") == "CURRENT_DATE"
+
+
+def test_boolean_encoded_as_0_or_1():
+    assert encode_value(True) == "1"
+    assert encode_value(False) == "0"
+
+
+# ----------- encode_in ---------------
 
 def test_in_with_values_produces_tuple():
-    w = [QueryFilter(field="o.status", op="IN", values=["O","F"])]
-    assert _pack_where(w) == "o.status|IN|('O','F')"
+    assert encode_in(["O", "F"]) == "('O','F')"
 
 
-def test_in_requires_values():
-    from fastapi import HTTPException
-    with pytest.raises(HTTPException):
-        _pack_where([QueryFilter(field="o.status", op="IN")])
+def test_in_with_numbers():
+    assert encode_in([1, 2, 3]) == "(1,2,3)"
 
 
-def test_having_uses_metric_name():
-    h = [QueryFilter(metric="revenue", op=">", value=1000, type="NUMBER")]
-    assert _pack_having(h) == "revenue|>|1000"
+# ----------- _encode_filter_rhs : op allow-list -----
+
+def test_unknown_op_rejected():
+    with pytest.raises(CompileError):
+        _encode_filter_rhs(CompileFilter(field="d.f", op=";DROP TABLE x--", value=1))
 
 
-def test_sort_joins_fields_and_direction():
-    s = [QuerySort(field="revenue", direction="desc"),
-         QuerySort(field="year")]
-    assert _pack_sort(s) == "revenue DESC,year ASC"
+def test_in_without_values_rejected():
+    with pytest.raises(CompileError):
+        _encode_filter_rhs(CompileFilter(field="o.status", op="IN"))
 
 
-def test_field_missing_rejected():
-    from fastapi import HTTPException
-    with pytest.raises(HTTPException):
-        _pack_where([QueryFilter(op="=", value="x")])
+# ----------- _encode_filter_rhs : RAW gate ----------
+
+def test_raw_rejects_semicolon():
+    with pytest.raises(CompileError):
+        _encode_filter_rhs(CompileFilter(
+            field="d.dt", op="=", type="RAW",
+            value="DATE '2026-01-01'; DROP TABLE x",
+        ))
+
+
+def test_raw_rejects_sql_comment():
+    with pytest.raises(CompileError):
+        _encode_filter_rhs(CompileFilter(
+            field="d.dt", op="=", type="RAW",
+            value="'x' -- comment",
+        ))
+
+
+def test_raw_accepts_date_literal():
+    out = _encode_filter_rhs(CompileFilter(
+        field="d.dt", op="=", type="RAW", value="DATE '2026-03-31'",
+    ))
+    assert out == "DATE '2026-03-31'"
+
+
+def test_raw_accepts_between_date_range():
+    out = _encode_filter_rhs(CompileFilter(
+        field="d.dt", op="BETWEEN", type="RAW",
+        value="DATE '2026-01-01' AND DATE '2026-03-31'",
+    ))
+    assert out == "DATE '2026-01-01' AND DATE '2026-03-31'"
+
+
+def test_raw_in_tuple_accepted():
+    out = _encode_filter_rhs(CompileFilter(
+        field="x.code", op="IN", type="RAW",
+        value="('A','B','C')",
+    ))
+    assert out == "('A','B','C')"

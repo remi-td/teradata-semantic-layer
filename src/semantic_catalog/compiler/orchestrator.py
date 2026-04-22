@@ -1,18 +1,19 @@
 """Top-level ``compile`` — resolver + join resolver + (later) metric-in-metric.
 
 Public entry point for the API layer and MCP tools. Accepts a
-QueryRequest and a CatalogDAO, returns a LogicalPlan ready for ``render``.
+CompileRequest and a CatalogDAO, returns a LogicalPlan ready for
+``render``.
 """
 from __future__ import annotations
 
-from ..api.models import QueryRequest
 from .catalog import CatalogDAO
 from .joins import JoinResolver
 from .logical import LogicalPlan
+from .request import CompileRequest
 from .resolver import Resolver
 
 
-def compile(req: QueryRequest, catalog: CatalogDAO) -> LogicalPlan:
+def compile(req: CompileRequest, catalog: CatalogDAO) -> LogicalPlan:
     """Compile a request into a LogicalPlan against the given catalog.
 
     Two phases:

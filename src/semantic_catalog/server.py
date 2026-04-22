@@ -42,11 +42,21 @@ def create_app() -> FastAPI:
         ),
         version=__version__,
     )
-    origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()]
+    origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()] or ["*"]
+    # CORS spec: `*` + credentials is illegal (browsers reject it). If the
+    # operator left the default permissive value, drop credentials; the
+    # localhost-only bind default keeps this safe for dev. Production
+    # deployments should set SC_CORS_ORIGINS to an explicit allowlist.
+    wildcard = "*" in origins
+    if wildcard:
+        log.warning(
+            "CORS_ALLOW_ORIGINS contains '*' — disabling allow_credentials. "
+            "Set SC_CORS_ORIGINS to an explicit comma-separated allowlist for production."
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=origins or ["*"],
-        allow_credentials=True,
+        allow_origins=origins,
+        allow_credentials=not wildcard,
         allow_methods=["*"],
         allow_headers=["*"],
     )

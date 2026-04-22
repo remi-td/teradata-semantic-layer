@@ -23,8 +23,8 @@ from __future__ import annotations
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
-from ..api.models import QueryFilter, QueryRequest, QuerySort
 from .catalog import CatalogDAO, MetricFilterRow, MetricRow
+from .request import CompileFilter, CompileRequest
 from .encoding import encode_in, encode_value
 from .errors import (
     AmbiguousPathError,
@@ -114,7 +114,7 @@ def _validate_op(op: str, lhs_for_error: str) -> str:
     return op_norm
 
 
-def _encode_filter_rhs(f: QueryFilter) -> str:
+def _encode_filter_rhs(f: CompileFilter) -> str:
     op = _validate_op(f.op, f.field or f.metric or "?")
     if op == "IN" or op == "NOT IN":
         if f.type and f.type.upper() == "RAW" and f.value is not None:
@@ -200,7 +200,7 @@ class _RequiredIndex:
 # ---------------------------------------------------------- resolver
 
 class Resolver:
-    """Compile a QueryRequest against a CatalogDAO into a LogicalPlan.
+    """Compile a CompileRequest against a CatalogDAO into a LogicalPlan.
 
     The resolver is stateless across calls; one instance can serve many.
     """
@@ -208,7 +208,7 @@ class Resolver:
     def __init__(self, catalog: CatalogDAO):
         self.catalog = catalog
 
-    def resolve(self, req: QueryRequest) -> LogicalPlan:
+    def resolve(self, req: CompileRequest) -> LogicalPlan:
         model_id = self.catalog.resolve_model_id(req.model)
         if model_id is None:
             raise UnknownModelError(f"Unknown model: {req.model}")
@@ -526,8 +526,8 @@ class Resolver:
     # -------- filters ----------
 
     def _resolve_filters(self, model_id: int,
-                         where: List[QueryFilter],
-                         having: List[QueryFilter],
+                         where: List[CompileFilter],
+                         having: List[CompileFilter],
                          metrics: List[MetricRef],
                          required: _RequiredIndex,
                          ) -> Tuple[List[ResolvedFilter], List[ResolvedFilter]]:

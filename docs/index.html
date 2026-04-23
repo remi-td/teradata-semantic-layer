@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Teradata Semantic Catalog — governed SQL, inside the warehouse</title>
+<meta name="description" content="A Teradata-native semantic layer with an embedded MCP server. Metrics, relationships, and row-level policies live in Teradata tables. The compiler runs in-process. One pip install.">
+<meta property="og:title" content="Teradata Semantic Catalog">
+<meta property="og:description" content="Your semantic layer belongs in the warehouse, not beside it.">
+<meta property="og:type" content="website">
+<link rel="icon" type="image/png" href="assets/teradata-sym.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-wrap">
+    <a class="brand" href="#top">
+      <img src="assets/teradata-logo.png" alt="teradata" class="brand-logo">
+      <span class="brand-sep">/</span>
+      <span class="brand-product">semantic catalog</span>
+    </a>
+    <nav class="top-nav">
+      <a href="#problem">Problem</a>
+      <a href="#demo">Demo</a>
+      <a href="#principles">Principles</a>
+      <a href="#ontology">Ontology</a>
+      <a href="#architecture">Architecture</a>
+      <a href="#compare">Compare</a>
+      <a href="#start">Get started</a>
+      <a href="https://github.com/remi-td/semantic-catalog" class="top-gh" aria-label="GitHub">GitHub ↗</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+
+<!-- ============================================================ Hero -->
+<section class="hero">
+  <div class="wrap">
+    <div class="hero-grid">
+      <div class="hero-text">
+        <div class="hero-eyebrow">Open source · Apache&nbsp;2.0 · v0.4.0</div>
+        <h1 class="hero-h1">Your semantic layer belongs in the warehouse, not beside it.</h1>
+        <p class="hero-sub">A Teradata-native semantic catalog with an embedded MCP server, so every AI agent queries the same governed model your BI tools already trust.</p>
+        <div class="hero-ctas">
+          <a class="btn btn-primary" href="#start">Install in five minutes</a>
+          <a class="btn btn-secondary" href="#demo">See it running →</a>
+        </div>
+        <ul class="hero-chips">
+          <li>One pip install</li>
+          <li>Zero middleware</li>
+          <li>Embedded MCP</li>
+          <li>148&nbsp;KB wheel</li>
+          <li>119 tests green</li>
+        </ul>
+      </div>
+      <div class="hero-code">
+        <div class="code-card">
+          <div class="code-head">
+            <span class="dot dot-r"></span>
+            <span class="dot dot-y"></span>
+            <span class="dot dot-g"></span>
+            <span class="code-title">terminal</span>
+          </div>
+          <pre><code><span class="tok-c">$</span> pip install semantic-catalog
+<span class="tok-c">$</span> export DATABASE_URI=<span class="tok-s">"teradata://…"</span>
+<span class="tok-c">$</span> semantic-catalog install <span class="tok-f">--with-sample</span>
+<span class="tok-o">[install]</span> core catalog deployed (+ sample: school_gradebook)
+<span class="tok-c">$</span> semantic-catalog serve
+semantic-catalog serving at http://127.0.0.1:8080</code></pre>
+        </div>
+        <div class="code-badge">
+          <span class="code-badge-dot"></span>
+          <span>GUI, REST, and MCP on one port</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Problem -->
+<section class="section section-light" id="problem">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Business value</div>
+      <h2>Three copies of revenue, and still drifting</h2>
+      <p class="sec-lede">It's 2026. The data already lives in Teradata. The governance already lives in Teradata. Users are asking why metrics don't agree.</p>
+    </div>
+    <div class="problem-grid">
+      <div class="problem-card">
+        <div class="problem-num">01</div>
+        <h3>One number, three definitions</h3>
+        <p>Revenue lives in the BI tool, in the dbt repo, and in the agent prompt. The quarterly board deck still disagrees with Finance.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-num">02</div>
+        <h3>Agents invent SQL at random</h3>
+        <p>A sales agent writes a join that duplicates customers. Revenue comes out 2× for a week. Nobody is paged until Friday.</p>
+      </div>
+      <div class="problem-card">
+        <div class="problem-num">03</div>
+        <h3>Another sidecar to babysit</h3>
+        <p>A new metrics middleware needs its own repo, its own auth, its own deploy, its own audit. You bought a database. You did not ask for this.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Demo -->
+<section class="section section-dark" id="demo">
+  <div class="wrap">
+    <div class="sec-head sec-head-dark">
+      <div class="eyebrow eyebrow-orange">Live demo</div>
+      <h2>Five interactions. Same process. Governed SQL at the end.</h2>
+      <p class="sec-lede">The real GUI, with a mocked backend. Open the standalone tour or walk the steps below.</p>
+    </div>
+
+    <div class="demo-frame">
+      <div class="demo-frame-chrome">
+        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+        <span class="demo-url">http://127.0.0.1:8080/</span>
+      </div>
+      <iframe src="demo/" class="demo-iframe" loading="lazy" title="Semantic catalog GUI demo"></iframe>
+    </div>
+
+    <div class="demo-steps">
+      <div class="demo-step">
+        <span class="demo-step-num">1</span>
+        <div>
+          <h4>Explore the catalog graph</h4>
+          <p>Datasets, metrics, and relationships as nodes. One glance shows the model's shape.</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <span class="demo-step-num">2</span>
+        <div>
+          <h4>Describe any entity</h4>
+          <p>Click a metric to see its SQL expression, the fields it touches, the synonyms an agent matches on.</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <span class="demo-step-num">3</span>
+        <div>
+          <h4>Build a query by tokens</h4>
+          <p>Pick metrics and dimensions. The compiler resolves joins, prunes unused datasets, detects chasm traps.</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <span class="demo-step-num">4</span>
+        <div>
+          <h4>Inspect the compiled SQL</h4>
+          <p>Teradata-native output with LOCKING ROW FOR ACCESS. Read it before you run it.</p>
+        </div>
+      </div>
+      <div class="demo-step">
+        <span class="demo-step-num">5</span>
+        <div>
+          <h4>Execute or hand to an agent</h4>
+          <p>The same request that the GUI compiled is the one <code>semantic.execute</code> runs over MCP.</p>
+        </div>
+      </div>
+    </div>
+
+    <p class="demo-note">The embedded demo runs against pre-recorded JSON so you can try the UX without deploying anything. In production every action hits a live Teradata through the same FastAPI process.</p>
+  </div>
+</section>
+
+<!-- ============================================================ Principles -->
+<section class="section section-light" id="principles">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Application</div>
+      <h2>Five principles the code refuses to compromise on</h2>
+      <p class="sec-lede">Everything else in the product follows from these five decisions.</p>
+    </div>
+
+    <div class="principle-grid">
+      <article class="principle">
+        <div class="principle-num">I</div>
+        <h3>The catalog is the engine</h3>
+        <p>Metadata lives in Teradata tables, not in a YAML repo that has to be deployed. The compiler reads what the database already knows. No separate metrics service to keep in sync, no build pipeline, no snapshot drift.</p>
+      </article>
+      <article class="principle">
+        <div class="principle-num">II</div>
+        <h3>One process, one identity, one audit trail</h3>
+        <p>MCP tools and REST endpoints share the same FastAPI process, the same bearer token, the same connection pool, and the same query log. Agents and humans leave indistinguishable footprints in DBQL — what auditors actually want.</p>
+      </article>
+      <article class="principle">
+        <div class="principle-num">III</div>
+        <h3>Compile in Python, execute in Teradata</h3>
+        <p>The resolver and join planner are ordinary Python behind a CatalogDAO Protocol. InMemoryCatalog runs every resolver test in under a second. Production swaps in a teradatasql-backed DAO. Same code path, no mocks in CI.</p>
+      </article>
+      <article class="principle">
+        <div class="principle-num">IV</div>
+        <h3>Stateless replicas, authoritative database</h3>
+        <p>Each FastAPI process holds at most four pooled connections and zero cross-request state. Horizontal scale is "add a replica." Cache invalidation is not a problem because there is no cache to invalidate.</p>
+      </article>
+      <article class="principle">
+        <div class="principle-num">V</div>
+        <h3>A cube is a dataset</h3>
+        <p>Register a pre-canned query as a single cube on Monday. Decompose it into facts and dimensions on Friday. Both patterns coexist in the same ontology. Progressive maturity, zero migration cost, no semantic rewrite.</p>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Ontology -->
+<section class="section section-light section-alt" id="ontology">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Information</div>
+      <h2>Twelve concepts, one semantic vocabulary</h2>
+      <p class="sec-lede">The catalog schema is the contract. Every tool — GUI, REST, MCP, exporter — reads and writes the same tables.</p>
+    </div>
+
+    <div class="ontology-grid">
+      <div class="onto-card onto-big">
+        <h4>Model</h4>
+        <p>A named container: one per domain or subject area. Owns datasets, metrics, relationships, and views.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Dataset</h4>
+        <p>A table, view, or registered cube that contributes to the model.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Field</h4>
+        <p>A column on a dataset. Tagged as <code>K</code> (key) or <code>A</code> (attribute).</p>
+      </div>
+      <div class="onto-card">
+        <h4>Metric</h4>
+        <p><code>SIMPLE</code>, <code>RATIO</code>, <code>CUMULATIVE</code>, or <code>DERIVED</code>. Carries aggregate fn + arg.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Metric filter</h4>
+        <p>Row-level filter on a base metric. Compiles to <code>AGG(CASE WHEN … THEN arg END)</code>.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Relationship</h4>
+        <p>Typed join between datasets with a cardinality and an optional role name.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Semantic view</h4>
+        <p>Curated projection: the certified slice exposed to consumers.</p>
+      </div>
+      <div class="onto-card">
+        <h4>View member</h4>
+        <p>A metric or dimension exposed inside a semantic view.</p>
+      </div>
+      <div class="onto-card">
+        <h4>AI context</h4>
+        <p>Instructions, synonyms, examples attached to any entity.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Format spec</h4>
+        <p>Display hints: currency, decimal places, date format.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Security policy</h4>
+        <p>Row-level filter per group. Injected at compile time.</p>
+      </div>
+      <div class="onto-card">
+        <h4>Hierarchy</h4>
+        <p>Drill-up / drill-down levels used by the GUI and agents.</p>
+      </div>
+    </div>
+
+    <div class="ontology-map">
+      <div class="map-title">How they connect</div>
+      <pre class="map-ascii"><code>SEMANTIC_MODEL
+   └── DATASET ─┬── FIELD
+                ├── DATASET_KEY
+                └── (source = table | view | source_query)
+
+SEMANTIC_MODEL
+   └── METRIC ──┬── METRIC_EXPRESSION  (TERADATA / ANSI_SQL)
+                ├── METRIC_FILTER      (base_metric + predicate)
+                └── METRIC_FIELD_REF   (which FIELDs it consumes)
+
+SEMANTIC_MODEL
+   └── RELATIONSHIP ── REL_COLUMN_MAP
+
+Polymorphic attachments  (entity_type + entity_id)
+   ├── AI_CONTEXT       → MODEL | DATASET | METRIC | VIEW
+   ├── FORMAT_SPEC      → FIELD | METRIC | VIEW_MEMBER
+   └── SECURITY_POLICY  → MODEL   (DATASET | VIEW roadmap)</code></pre>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Architecture -->
+<section class="section section-dark" id="architecture">
+  <div class="wrap">
+    <div class="sec-head sec-head-dark">
+      <div class="eyebrow eyebrow-orange">Technology</div>
+      <h2>One process. One pool. One identity.</h2>
+      <p class="sec-lede">The catalog is a set of tables in the same database that holds the data. The compiler runs beside them, not across a network.</p>
+    </div>
+
+    <div class="arch-diagram">
+      <div class="arch-row arch-clients">
+        <div class="arch-box">
+          <div class="arch-box-title">AI agent / MCP client</div>
+          <div class="arch-box-sub">Claude · Cursor · any MCP-aware</div>
+        </div>
+        <div class="arch-box">
+          <div class="arch-box-title">Browser GUI · curl · BI tool</div>
+          <div class="arch-box-sub">REST + JSON</div>
+        </div>
+      </div>
+      <div class="arch-arrow">
+        <span>bearer token · X-Semantic-Groups</span>
+      </div>
+      <div class="arch-row arch-single">
+        <div class="arch-box arch-fastapi">
+          <div class="arch-box-title">FastAPI process <span class="arch-tag">uvicorn · stateless · N replicas</span></div>
+          <div class="arch-routes">
+            <span class="route">/mcp/tools/*</span>
+            <span class="route">/api/query/*</span>
+            <span class="route">/api/catalog/*</span>
+            <span class="route">/api/import</span>
+            <span class="route">/api/export/osi</span>
+          </div>
+        </div>
+      </div>
+      <div class="arch-row arch-single">
+        <div class="arch-box arch-compiler">
+          <div class="arch-box-title">Python compiler <span class="arch-tag">pure · offline-testable · zero middleware</span></div>
+          <div class="arch-flow">
+            <span>resolver</span><span class="arr">→</span>
+            <span>joins (BFS + chasm)</span><span class="arr">→</span>
+            <span>render (sqlglot → Teradata SQL)</span>
+          </div>
+        </div>
+      </div>
+      <div class="arch-arrow">
+        <span>teradatasql connection pool · ≤ 4 / replica</span>
+      </div>
+      <div class="arch-row arch-single">
+        <div class="arch-box arch-teradata">
+          <div class="arch-box-title">Teradata Vantage</div>
+          <div class="arch-box-sub">Catalog tables (SEMANTIC_MODEL · METRIC · RELATIONSHIP · SECURITY_POLICY · …) + user data</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="arch-caption">One process. One connection pool. One identity. The catalog is a set of tables in the same database that holds the data.</div>
+
+    <div class="pipeline">
+      <h3 class="pipeline-h">What happens to a <code>semantic.execute</code> request</h3>
+      <ol class="pipeline-steps">
+        <li><b>Auth</b> — bearer token verified with <code>hmac.compare_digest</code>; body parsed into Pydantic.</li>
+        <li><b>Translate</b> — API model converted to the compiler's own dataclass request. No shared types.</li>
+        <li><b>Resolve</b> — model, fields, metrics, filters fetched via CatalogDAO; LogicalPlan of tokens built.</li>
+        <li><b>Join</b> — BFS over RELATIONSHIP edges, unused datasets pruned, chasm traps refused.</li>
+        <li><b>Secure</b> — SECURITY_POLICY rows matching <code>X-Semantic-Groups</code> appended as WHERE_RAW nodes.</li>
+        <li><b>Render</b> — sqlglot AST dialected to Teradata; <code>LOCKING ROW FOR ACCESS</code> prepended.</li>
+        <li><b>Validate</b> — read-only verb gate; RAW filter values regex-checked before binding.</li>
+        <li><b>Execute</b> — pooled cursor runs the statement; rows stream back as JSON.</li>
+      </ol>
+      <p class="pipeline-note">p99 is dominated by the Teradata round-trip. Python compilation is sub-millisecond on realistic models.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Compare -->
+<section class="section section-light" id="compare">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Against the field</div>
+      <h2>Every other semantic layer sits outside the database</h2>
+      <p class="sec-lede">Pick what's true, not what sounds true. The landscape in one honest table.</p>
+    </div>
+
+    <div class="compare-table-wrap">
+      <table class="compare-table">
+        <thead>
+          <tr>
+            <th class="th-label"></th>
+            <th class="th-us"><span class="th-tag">this project</span><br>Teradata Semantic Catalog</th>
+            <th>dbt Semantic Layer<br>/ MetricFlow</th>
+            <th>Cube.dev</th>
+            <th>Honeydew</th>
+            <th>AtScale</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><th>Runs where</th>
+              <td class="td-us">Inside the database process</td>
+              <td>External Python middleware</td>
+              <td>External Rust / JS server</td>
+              <td>External SaaS</td>
+              <td>External server cluster</td></tr>
+          <tr><th>Metadata lives in</th>
+              <td class="td-us">Teradata catalog tables</td>
+              <td>YAML in a dbt repo</td>
+              <td>YAML / JS files</td>
+              <td>SaaS workspace</td>
+              <td>Proprietary store</td></tr>
+          <tr><th>MCP endpoint</th>
+              <td class="td-us">Embedded in the same process</td>
+              <td>Separate service (2025)</td>
+              <td>Separate service (2025)</td>
+              <td>Separate service</td>
+              <td>Separate service</td></tr>
+          <tr><th>Cold start</th>
+              <td class="td-us">None</td>
+              <td>Service warm-up</td>
+              <td>Pre-aggregation build</td>
+              <td>SaaS warm-up</td>
+              <td>Cluster warm-up</td></tr>
+          <tr><th>Cube + entity in one model</th>
+              <td class="td-us">Yes, by design</td>
+              <td>Entity-only</td>
+              <td>Cube-first</td>
+              <td>Entity-only</td>
+              <td>Cube-first</td></tr>
+          <tr><th>Open source</th>
+              <td class="td-us">Apache 2.0</td>
+              <td>Apache 2.0</td>
+              <td>Apache 2.0 (Core)</td>
+              <td>Closed SaaS</td>
+              <td>Closed</td></tr>
+          <tr><th>Database coverage</th>
+              <td class="td-us">Teradata only</td>
+              <td>Many warehouses</td>
+              <td>Many warehouses</td>
+              <td>Many warehouses</td>
+              <td>Many warehouses</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="compare-note">If you are not on Teradata, pick one of the others. If you are, every one of them adds a sidecar process, a new auth layer, and a cache to invalidate.</p>
+  </div>
+</section>
+
+<!-- ============================================================ Security -->
+<section class="section section-light section-alt" id="security">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Security posture</div>
+      <h2>Governed by default, not by exception</h2>
+    </div>
+    <div class="security-grid">
+      <div class="sec-card">
+        <div class="sec-card-k">Auth</div>
+        <p>Bearer token compared with <code>hmac.compare_digest</code>. Same token guards <code>/api/*</code> and <code>/mcp/*</code>.</p>
+      </div>
+      <div class="sec-card">
+        <div class="sec-card-k">Row-level security</div>
+        <p>SECURITY_POLICY rows selected by operator-signed <code>X-Semantic-Groups</code> header; injected at compile time.</p>
+      </div>
+      <div class="sec-card">
+        <div class="sec-card-k">Injection defense</div>
+        <p>RAW filter values regex-validated. Identifiers rendered through sqlglot, never concatenated.</p>
+      </div>
+      <div class="sec-card">
+        <div class="sec-card-k">SQL gating</div>
+        <p>EXPLAIN and execute routes accept read verbs only. DDL and DML rejected pre-parse.</p>
+      </div>
+      <div class="sec-card">
+        <div class="sec-card-k">Secret redaction</div>
+        <p>DATABASE_URI password stripped from logs and <code>/api/health</code>. No token echoed in responses.</p>
+      </div>
+      <div class="sec-card">
+        <div class="sec-card-k">Supply chain</div>
+        <p>Apache 2.0. Pinned deps. 148&nbsp;KB wheel. 119 unit tests green on every build.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ Get started -->
+<section class="section section-light" id="start">
+  <div class="wrap">
+    <div class="sec-head">
+      <div class="eyebrow">Get started</div>
+      <h2>Three commands to a governed query</h2>
+      <p class="sec-lede">Works against any Teradata, including the <a href="https://clearscape.teradata.com/">ClearScape</a> free tier.</p>
+    </div>
+
+    <div class="start-grid">
+      <div class="start-step">
+        <div class="start-head"><span class="start-num">1</span><h4>Install</h4></div>
+        <pre class="code"><code><span class="tok-c">$</span> pip install semantic-catalog
+<span class="tok-c">$</span> export DATABASE_URI=<span class="tok-s">"teradata://user:pw@host/db"</span></code></pre>
+      </div>
+      <div class="start-step">
+        <div class="start-head"><span class="start-num">2</span><h4>Deploy catalog + sample</h4></div>
+        <pre class="code"><code><span class="tok-c">$</span> semantic-catalog install <span class="tok-f">--with-sample</span>
+<span class="tok-o">[install]</span> core catalog deployed (+ sample: school_gradebook)</code></pre>
+      </div>
+      <div class="start-step">
+        <div class="start-head"><span class="start-num">3</span><h4>Serve GUI + REST + MCP</h4></div>
+        <pre class="code"><code><span class="tok-c">$</span> semantic-catalog serve
+semantic-catalog serving at http://127.0.0.1:8080
+ → GUI  http://127.0.0.1:8080/
+ → MCP  http://127.0.0.1:8080/mcp/tools</code></pre>
+      </div>
+    </div>
+
+    <div class="start-next">
+      <h3>Wire an agent to it</h3>
+      <p>Claude Desktop / Cursor / any MCP-aware client:</p>
+      <pre class="code"><code><span class="tok-k">{</span>
+  <span class="tok-s">"mcpServers"</span>: <span class="tok-k">{</span>
+    <span class="tok-s">"semantic-catalog"</span>: <span class="tok-k">{</span>
+      <span class="tok-s">"url"</span>: <span class="tok-s">"http://localhost:8080/mcp"</span>,
+      <span class="tok-s">"headers"</span>: <span class="tok-k">{</span> <span class="tok-s">"Authorization"</span>: <span class="tok-s">"Bearer ${SEMANTIC_API_TOKEN}"</span> <span class="tok-k">}</span>
+    <span class="tok-k">}</span>
+  <span class="tok-k">}</span>
+<span class="tok-k">}</span></code></pre>
+      <p>The five <code>semantic.*</code> tools surface automatically: search, describe, compile, execute, export_osi.</p>
+    </div>
+
+    <div class="start-ctas">
+      <a class="btn btn-primary" href="https://github.com/remi-td/semantic-catalog">Read the source on GitHub ↗</a>
+      <a class="btn btn-ghost" href="https://github.com/remi-td/semantic-catalog/tree/master/docs">Documentation</a>
+      <a class="btn btn-ghost" href="https://github.com/remi-td/semantic-catalog/tree/master/agentic">Agent skill</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="footer">
+  <div class="wrap footer-wrap">
+    <div class="footer-brand">
+      <img src="assets/teradata-logo.png" alt="teradata" class="footer-logo">
+      <span class="footer-sep">/</span>
+      <span>semantic catalog · v0.4.0 · Apache&nbsp;2.0</span>
+    </div>
+    <div class="footer-links">
+      <a href="https://github.com/remi-td/semantic-catalog">GitHub</a>
+      <a href="https://github.com/remi-td/semantic-catalog/issues">Issues</a>
+      <a href="https://github.com/remi-td/semantic-catalog/blob/master/LICENSE">License</a>
+      <a href="https://github.com/remi-td/semantic-catalog/tree/master/agentic/skills/semantic-catalog">Claude skill</a>
+    </div>
+    <div class="footer-note">
+      Built at Teradata. Open source. Not an official Teradata product.
+    </div>
+  </div>
+</footer>
+
+<script src="app.js" defer></script>
+</body>
+</html>

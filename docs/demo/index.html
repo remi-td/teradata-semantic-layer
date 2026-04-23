@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Teradata Semantic Catalog</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/png" href="assets/teradata_sym_rgb_pos.png">
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="style.css">
+
+<script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
+<script src="https://unpkg.com/layout-base/layout-base.js"></script>
+<script src="https://unpkg.com/cose-base/cose-base.js"></script>
+<script src="https://unpkg.com/cytoscape-fcose@2.2.0/cytoscape-fcose.js"></script>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="topbar-brand">
+    <img class="logo" src="assets/teradata_logo_rgb_pos.png" alt="Teradata"/>
+    <div class="topbar-title">
+      <div class="topbar-product">Semantic catalog</div>
+      <div class="topbar-tag">Explore · compose · deliver trusted metrics</div>
+    </div>
+  </div>
+  <div class="topbar-actions">
+    <label class="model-selector">
+      <span>Model</span>
+      <select id="model-select"></select>
+    </label>
+    <button id="btn-export-osi"  class="btn btn-ghost"  title="Export this model to OSI YAML">OSI YAML</button>
+    <button id="btn-refresh"     class="btn btn-ghost"  title="Reload the model">Refresh</button>
+    <span id="health" class="health-indicator" title="Database status">●</span>
+  </div>
+</header>
+
+<main class="layout">
+
+  <!-- LEFT SIDEBAR: search + tree ------------------------------------- -->
+  <aside class="sidebar">
+    <div class="search">
+      <input id="search-input" type="search" placeholder="Search terms, fields, metrics…">
+      <div id="search-filter-chips" class="chips">
+        <button class="chip chip-active" data-kind="ALL">All</button>
+        <button class="chip" data-kind="DATASET">Datasets</button>
+        <button class="chip" data-kind="METRIC">Metrics</button>
+        <button class="chip" data-kind="FIELD">Fields</button>
+        <button class="chip" data-kind="VIEW">Views</button>
+      </div>
+    </div>
+    <div id="search-results" class="search-results" hidden></div>
+    <div id="tree" class="tree"></div>
+  </aside>
+
+  <!-- CENTER: tabbed workspace ---------------------------------------- -->
+  <section class="workspace">
+    <nav class="tabs">
+      <button class="tab tab-active" data-tab="graph">Graph</button>
+      <button class="tab"             data-tab="query">Query builder</button>
+      <button class="tab"             data-tab="import">Import</button>
+      <button class="tab"             data-tab="export">Export</button>
+    </nav>
+
+    <!-- GRAPH -->
+    <div class="panel panel-active" data-panel="graph">
+      <div class="graph-toolbar">
+        <button id="btn-graph-fit"      class="btn btn-ghost">Fit</button>
+        <button id="btn-graph-relayout" class="btn btn-ghost">Re-layout</button>
+        <div class="legend">
+          <span class="legend-item"><span class="swatch sw-ds-table"></span>Dataset (table)</span>
+          <span class="legend-item"><span class="swatch sw-ds-cube"></span>Dataset (cube)</span>
+          <span class="legend-item"><span class="swatch sw-metric"></span>Metric</span>
+          <span class="legend-item"><span class="swatch sw-view"></span>View</span>
+          <span class="legend-item"><span class="edge-line edge-rel"></span>Join</span>
+          <span class="legend-item"><span class="edge-line edge-met"></span>Primary</span>
+        </div>
+      </div>
+      <div id="cy" class="cy"></div>
+    </div>
+
+    <!-- QUERY BUILDER -->
+    <div class="panel" data-panel="query">
+      <div class="qb-grid">
+        <div class="qb-left">
+          <h3>Metrics</h3>
+          <div id="qb-metrics" class="chip-list"></div>
+          <h3>Dimensions</h3>
+          <div id="qb-dims" class="chip-list"></div>
+          <h3>Filters</h3>
+          <div id="qb-filters" class="filter-list"></div>
+          <button id="btn-add-filter" class="btn btn-ghost btn-sm">+ Add filter</button>
+          <div class="qb-row">
+            <label>Limit
+              <input id="qb-limit" type="number" min="0" value="100">
+            </label>
+            <label>Sort by
+              <input id="qb-sort" type="text" placeholder="revenue DESC">
+            </label>
+          </div>
+          <div class="qb-actions">
+            <button id="btn-compile" class="btn btn-primary">Compile</button>
+            <button id="btn-execute" class="btn btn-outline">Compile + Run</button>
+            <button id="btn-explain" class="btn btn-ghost">EXPLAIN</button>
+            <button id="btn-qb-reset" class="btn btn-ghost">Reset</button>
+          </div>
+        </div>
+        <div class="qb-right">
+          <div class="sql-card">
+            <div class="sql-card-header">
+              <span>Compiled SQL</span>
+              <span id="qb-anchor" class="muted"></span>
+              <button id="btn-copy-sql" class="btn btn-ghost btn-sm">Copy</button>
+            </div>
+            <pre id="qb-sql" class="sql"></pre>
+            <div id="qb-status" class="qb-status"></div>
+          </div>
+          <div class="results-card">
+            <div class="sql-card-header">
+              <span>Results</span>
+              <span id="qb-row-count" class="muted"></span>
+            </div>
+            <div id="qb-results" class="results"></div>
+          </div>
+          <div class="sql-card" id="qb-explain-card" hidden>
+            <div class="sql-card-header">
+              <span>EXPLAIN</span>
+              <button id="btn-close-explain" class="btn btn-ghost btn-sm">Close</button>
+            </div>
+            <pre id="qb-explain" class="sql"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- IMPORT -->
+    <div class="panel" data-panel="import">
+      <div class="imp-grid">
+        <div class="imp-left">
+          <div class="imp-toolbar">
+            <label>Target model
+              <input id="imp-model" type="text">
+            </label>
+            <label class="toggle">
+              <input id="imp-dry-run" type="checkbox" checked>
+              <span>Dry run (validate only)</span>
+            </label>
+            <button id="btn-imp-template" class="btn btn-ghost btn-sm">Load example</button>
+          </div>
+          <textarea id="imp-text" spellcheck="false"
+                    placeholder="Paste YAML or JSON describing the entities to add…"></textarea>
+          <div class="imp-actions">
+            <button id="btn-imp-validate" class="btn btn-outline">Validate</button>
+            <button id="btn-imp-apply"    class="btn btn-primary">Validate + Apply</button>
+          </div>
+        </div>
+        <div class="imp-right">
+          <div class="sql-card">
+            <div class="sql-card-header">
+              <span>Import report</span>
+              <span id="imp-summary" class="muted"></span>
+            </div>
+            <div id="imp-results" class="imp-results"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- EXPORT -->
+    <div class="panel" data-panel="export">
+      <div class="exp-toolbar">
+        <button id="btn-exp-osi"  class="btn btn-outline">OSI YAML</button>
+        <button id="btn-exp-copy" class="btn btn-ghost">Copy</button>
+        <button id="btn-exp-download" class="btn btn-ghost">Download</button>
+      </div>
+      <pre id="exp-text" class="sql exp-text"></pre>
+    </div>
+  </section>
+
+  <!-- RIGHT DRAWER ---------------------------------------------------- -->
+  <aside class="drawer">
+    <div id="drawer-header" class="drawer-header">
+      <div class="drawer-title">
+        <span id="drawer-kind" class="tag">—</span>
+        <span id="drawer-name">Select an entity</span>
+      </div>
+      <p id="drawer-sub" class="drawer-sub"></p>
+    </div>
+    <nav class="drawer-tabs">
+      <button class="dtab dtab-active" data-dtab="overview">Overview</button>
+      <button class="dtab" data-dtab="fields"   id="dtab-fields"   hidden>Fields</button>
+      <button class="dtab" data-dtab="metrics"  id="dtab-metrics"  hidden>Metrics</button>
+      <button class="dtab" data-dtab="sql"      id="dtab-sql"      hidden>SQL</button>
+      <button class="dtab" data-dtab="ai"       id="dtab-ai">AI&nbsp;context</button>
+    </nav>
+    <div class="dpanes">
+      <div id="dp-overview" class="dpane dpane-active">
+        <p class="hint">Pick a dataset, metric or view to see its full definition here.</p>
+      </div>
+      <div id="dp-fields"   class="dpane"></div>
+      <div id="dp-metrics"  class="dpane"></div>
+      <div id="dp-sql"      class="dpane"></div>
+      <div id="dp-ai"       class="dpane"></div>
+    </div>
+  </aside>
+
+</main>
+
+<div id="toast" class="toast" hidden></div>
+
+<div id="demo-banner" style="position:fixed;bottom:14px;right:14px;background:#FF5F02;color:#fff;font-family:Inter,sans-serif;font-size:12px;font-weight:600;padding:8px 14px;border-radius:999px;box-shadow:0 4px 14px rgba(255,95,2,0.35);z-index:2000;letter-spacing:0.04em">DEMO · cached data · no DB</div>
+
+<script src="mock-backend.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

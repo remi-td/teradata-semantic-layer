@@ -36,8 +36,10 @@ class AmbiguousPathError(CompileError):
     and the caller didn't pin a role."""
     code = "AMBIGUOUS_PATH"
 
-    def __init__(self, message: str, *, roles: List[str], details: Optional[dict] = None):
-        super().__init__(message, details={**(details or {}), "roles": list(roles)})
+    def __init__(self, message: str, *, roles: List[str],
+                 details: Optional[dict] = None):
+        merged = {"roles": list(roles), **(details or {})}
+        super().__init__(message, details=merged)
         self.roles = list(roles)
 
 

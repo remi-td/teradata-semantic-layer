@@ -532,13 +532,20 @@ class Resolver:
             if r.to_dataset_id == ds.dataset_id
         ]
         if len(incoming) > 1:
+            # The "edge" is whatever name the parser will accept — role_name
+            # if present, otherwise relationship_name. The two are unified by
+            # ``find_relationship_by_role``, so the strings produced here are
+            # exactly what the caller should retry with.
             roles = [r.role_name or r.relationship_name or str(r.relationship_id)
                      for r in incoming]
+            field_name = token.split(".")[-1]
+            suggestions = [f"{role}.{field_name}" for role in roles]
             raise AmbiguousPathError(
                 f"AMBIGUOUS_PATH: dim '{token}' has {len(incoming)} paths "
-                f"to {ds.dataset_name} (roles: {', '.join(roles)}). "
-                f"Prefix the dim with a role, e.g. role_name.field_name.",
+                f"to {ds.dataset_name}. Retry with one of: "
+                f"{', '.join(suggestions)}.",
                 roles=roles,
+                details={"suggestions": suggestions, "target": ds.dataset_name},
             )
 
     # -------- filters ----------

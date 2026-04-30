@@ -230,7 +230,7 @@ def test_export_osi_tool_passthrough(mcp, monkeypatch):
         called["db"], called["model"] = db, model_name
         return "version: '0.1.1'\nsemantic_model:\n- name: x\n"
 
-    monkeypatch.setattr("semantic_catalog.mcp.tools.export_osi_yaml", _fake)
+    monkeypatch.setattr("semantic_catalog.services.export_osi_yaml", _fake)
     body = client.call_tool("semantic_export_osi", {"model": "x"})
     inner = body["result"]["structuredContent"]["result"]
     assert "version" in inner["yaml"]

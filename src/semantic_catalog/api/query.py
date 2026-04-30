@@ -1,23 +1,18 @@
 """Query builder + execution endpoints.
 
-The compiler is pure Python — resolution, join planning, and sqlglot
-rendering all run in-process in ``semantic_catalog.compiler``. The
-legacy ``engine=sql`` path (stored-procedure ``sp_semantic_request``)
-was removed in v0.4; the macro is no longer deployed.
+Thin transport layer over ``semantic_catalog.services.run_query`` —
+that function is the single source of truth for the compile/execute
+pipeline (also used by the MCP tool surface).
 """
 from __future__ import annotations
 
 import logging
-from decimal import Decimal
-from datetime import date, datetime
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 
 from ..db import get_pool
-from ..compiler import DbCatalog, compile as py_compile, render
-from ..compiler.errors import CompileError
-from ..compiler.request import from_mapping as _to_compile_request
+from .. import services
 from .models import (
     ExplainRequest,
     ExplainResponse,
@@ -28,44 +23,6 @@ from .models import (
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/query", tags=["query"])
-
-
-# ---- result normalisation ----
-
-def _normalise(v: Any) -> Any:
-    if v is None:
-        return None
-    if isinstance(v, Decimal):
-        return float(v)
-    if isinstance(v, (date, datetime)):
-        return v.isoformat()
-    if isinstance(v, bytes):
-        try:
-            return v.decode("utf-8", errors="replace")
-        except Exception:
-            return v.hex()
-    if isinstance(v, str):
-        return v.rstrip() if v.endswith(" ") else v
-    return v
-
-
-def _db_name() -> str:
-    from ..config import load_settings
-    return load_settings().catalog_db
-
-
-def _short_err(e: BaseException, *, limit: int = 240) -> str:
-    """Render an exception as a single line suitable for validation_message.
-
-    Keeps the class name (so 'KeyError' vs 'ProgrammingError' is visible to
-    the caller) and truncates long driver messages so the UI banner stays
-    readable. The full traceback is already logged server-side.
-    """
-    msg = str(e).strip() or e.__class__.__name__
-    msg = " ".join(msg.split())  # collapse newlines/tabs from driver text
-    if len(msg) > limit:
-        msg = msg[: limit - 1] + "…"
-    return f"{e.__class__.__name__}: {msg}"
 
 
 def _parse_groups(header: Optional[str]) -> List[str]:
@@ -80,128 +37,44 @@ def _parse_groups(header: Optional[str]) -> List[str]:
     return [g.strip() for g in header.split(",") if g.strip()]
 
 
+def _to_response(res: services.QueryResult) -> QueryResponse:
+    execution = None
+    if res.execution:
+        execution = QueryExecution(
+            columns=res.execution.columns,
+            rows=res.execution.rows,
+            row_count=res.execution.row_count,
+            truncated=res.execution.truncated,
+        )
+    joined = ", ".join(res.joined_datasets) if res.joined_datasets else None
+    return QueryResponse(
+        compiled_sql=res.compiled_sql,
+        is_valid=res.is_valid,
+        validation_message=res.validation_message,
+        anchor_dataset=res.anchor_dataset,
+        joined_datasets=joined,
+        execution=execution,
+    )
+
+
 # ---- endpoints ----
 
 @router.post("/compile", response_model=QueryResponse)
 def compile_query(req: QueryRequest,
                   x_semantic_groups: Optional[str] = Header(default=None)):
-    return _compile_and_maybe_execute(req, execute=False, groups_header=x_semantic_groups)
+    res = services.run_query(
+        request=req, execute=False, groups=_parse_groups(x_semantic_groups),
+    )
+    return _to_response(res)
 
 
 @router.post("/execute", response_model=QueryResponse)
 def execute_query(req: QueryRequest,
                   x_semantic_groups: Optional[str] = Header(default=None)):
-    return _compile_and_maybe_execute(req, execute=True, groups_header=x_semantic_groups)
-
-
-def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool,
-                               groups_header: Optional[str] = None) -> QueryResponse:
-    """Default engine — Python compiler over DbCatalog.
-
-    When ``X-Semantic-Groups`` is supplied, the API layer looks up
-    ROW_FILTER policies on the requested model for those groups and
-    feeds the resulting WHERE fragments to the compiler via
-    ``CompileRequest.policy_fragments``. The request body itself cannot
-    set RLS predicates (see ``compiler/request.py``).
-    """
-    db = _db_name()
-    compile_sql: Optional[str] = None
-    is_valid: Optional[int] = None
-    validation_msg: Optional[str] = None
-    anchor: Optional[str] = None
-    joined: Optional[str] = None
-    execution: Optional[QueryExecution] = None
-
-    compile_req = _to_compile_request(req)
-    groups = _parse_groups(groups_header)
-
-    with get_pool().cursor() as cur:
-        catalog = DbCatalog(cur, catalog_db=db)
-        # Resolve RLS before handing off to the compiler: if the model
-        # doesn't exist we let the compiler raise the UNKNOWN_MODEL
-        # error with a consistent shape, so skip the lookup in that case.
-        try:
-            model_id = catalog.resolve_model_id(compile_req.model)
-        except Exception:  # noqa: BLE001
-            model_id = None
-        if model_id is not None:
-            try:
-                fragments = catalog.load_row_filters(model_id, groups)
-            except Exception:  # noqa: BLE001
-                log.exception("load_row_filters failed — proceeding without RLS")
-                fragments = []
-            if fragments:
-                compile_req.policy_fragments = list(fragments)
-
-        try:
-            plan = py_compile(compile_req, catalog)
-        except CompileError as e:
-            return QueryResponse(
-                compiled_sql=None, is_valid=0,
-                validation_message=f"{e.code}: {e.message}",
-                anchor_dataset=None, joined_datasets=None, execution=None,
-            )
-        except Exception as e:  # noqa: BLE001
-            # Catalog-layer failure (bad DB state, driver error, unexpected
-            # shape). Never leak as a 500 — the caller is an agent or the
-            # GUI and can only act on a structured message.
-            log.exception("compile failed unexpectedly")
-            return QueryResponse(
-                compiled_sql=None, is_valid=0,
-                validation_message=f"INTERNAL: {_short_err(e)}",
-                anchor_dataset=None, joined_datasets=None, execution=None,
-            )
-
-        try:
-            compile_sql = render(plan)
-        except Exception as e:  # noqa: BLE001
-            log.exception("render failed for plan on model=%s", compile_req.model)
-            return QueryResponse(
-                compiled_sql=None, is_valid=0,
-                validation_message=f"RENDER_ERROR: {_short_err(e)}",
-                anchor_dataset=plan.anchor.dataset_name if plan.anchor else None,
-                joined_datasets=None, execution=None,
-            )
-        anchor = plan.anchor.dataset_name if plan.anchor else None
-        joined = ", ".join(plan.joined_datasets) if plan.joined_datasets else None
-        validation_msg = plan.chasm_warning or None
-
-        # Plan-level validity: if something is unresolved or chasm warns,
-        # mark invalid so the caller is forced to acknowledge.
-        if plan.unresolved:
-            validation_msg = (
-                f"Could not resolve join path for datasets: "
-                f"{', '.join(plan.unresolved)}"
-            )
-            is_valid = 0
-        elif plan.chasm_warning:
-            is_valid = 0
-        else:
-            is_valid = 1
-
-        if execute and compile_sql and is_valid == 1:
-            try:
-                cur.execute(compile_sql)
-                cols = [d[0] for d in (cur.description or [])]
-                all_rows = cur.fetchall() or []
-                cap = 500
-                trunc = len(all_rows) > cap
-                rows = [[_normalise(v) for v in row] for row in all_rows[:cap]]
-                execution = QueryExecution(
-                    columns=cols, rows=rows, row_count=len(all_rows), truncated=trunc,
-                )
-            except Exception as e:  # noqa: BLE001
-                validation_msg = f"{validation_msg or ''} | EXECUTE_ERROR: {e}".strip(" |")
-                is_valid = 0
-
-    return QueryResponse(
-        compiled_sql=compile_sql,
-        is_valid=is_valid,
-        validation_message=validation_msg,
-        anchor_dataset=anchor,
-        joined_datasets=joined,
-        execution=execution,
+    res = services.run_query(
+        request=req, execute=True, groups=_parse_groups(x_semantic_groups),
     )
+    return _to_response(res)
 
 
 _EXPLAIN_LEAD = ("select", "with", "locking")

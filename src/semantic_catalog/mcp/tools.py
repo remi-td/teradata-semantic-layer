@@ -1,29 +1,19 @@
-"""Pure-Python tool implementations.
+"""MCP tool adapters.
 
-Each function here is the actual semantic-catalog operation surfaced as
-an MCP tool. They are independent of any transport: they take typed
-arguments, talk to the connection pool, and return JSON-serialisable
-dicts. The FastMCP server in ``server.py`` registers these directly
-with ``@mcp.tool()`` so the same code path serves every MCP client.
+Every tool here is a thin wrapper that delegates to
+``semantic_catalog.services``. The service layer is shared with the
+REST API (``api/*``) so search, describe, compile, execute, and OSI
+export run through exactly one code path regardless of transport.
 
-Errors are raised as ``ValueError`` (validation) or propagate from the
-underlying compiler/exporter. FastMCP turns these into proper JSON-RPC
-error responses for the client.
+Validation errors raise ``ValueError``; FastMCP turns these into
+JSON-RPC error responses for the client.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from dataclasses import asdict
+from typing import Any, Dict, Optional
 
-from ..compiler import DbCatalog, compile as py_compile, render
-from ..compiler.errors import CompileError
-from ..compiler.request import from_mapping as _to_compile_request
-from ..db import get_pool
-from ..exporter import export_osi_yaml
-
-
-def _db_name() -> str:
-    from ..config import load_settings
-    return load_settings().catalog_db
+from .. import services
 
 
 def semantic_search(
@@ -31,20 +21,12 @@ def semantic_search(
     model: Optional[str] = None,
     limit: int = 50,
 ) -> Dict[str, Any]:
-    """Full-text search across the catalog.
-
-    Searches dataset / metric / view names, descriptions, and AI synonyms.
-    Returns a ranked list of hits scoped to ``model`` when given.
-    """
-    if not term:
-        raise ValueError("term is required")
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        cur.execute(f"EXEC {db}.m_semantic_search(?, ?)", (term, model))
-        rows = cur.fetchall() or []
-        cols = [d[0] for d in cur.description or []]
-    hits = [dict(zip(cols, r)) for r in rows[:limit]]
-    return {"hits": hits, "count": len(hits)}
+    """Full-text search across the catalog."""
+    hits = services.search_catalog(term=term, model=model, limit=limit)
+    return {
+        "hits": [asdict(h) for h in hits],
+        "count": len(hits),
+    }
 
 
 def semantic_describe(
@@ -52,54 +34,41 @@ def semantic_describe(
     entity_name: str,
     model: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Full metadata for one catalog entity.
-
-    Returns ``(attr_ordinal, attr_key, attr_value)`` triples covering
-    description, AI context, format spec, fields/expressions, etc.
-    """
-    if not entity_type or not entity_name:
-        raise ValueError("entity_type and entity_name are required")
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        cur.execute(
-            f"EXEC {db}.m_semantic_describe(?, ?, ?)",
-            (entity_type.upper(), entity_name, model),
+    """Full metadata pack for one catalog entity."""
+    try:
+        result = services.describe_entity(
+            entity_type=entity_type, entity_name=entity_name, model=model,
         )
-        rows = cur.fetchall() or []
-        cols = [d[0] for d in cur.description or []]
+    except services.EntityNotFound as e:
+        raise ValueError(str(e))
     return {
-        "entity_type": entity_type,
-        "entity_name": entity_name,
-        "attributes": [dict(zip(cols, r)) for r in rows],
+        "entity_type": result.entity_type,
+        "entity_name": result.entity_name,
+        "model_name": result.model_name,
+        "attributes": [asdict(a) for a in result.attributes],
     }
 
 
 def semantic_compile(request: Dict[str, Any]) -> Dict[str, Any]:
-    """Compile a structured query request to Teradata SQL.
-
-    The ``request`` mapping mirrors the REST `/api/query/compile` body:
-    ``{"model": ..., "metrics": [...], "dimensions": [...], "where": [...], "having": [...], "sort": [...], "limit": N}``.
-    """
+    """Compile a structured query request to Teradata SQL."""
     if not isinstance(request, dict):
         raise ValueError("request must be a JSON object")
-    req = _to_compile_request(request)
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        catalog = DbCatalog(cur, catalog_db=db)
-        try:
-            plan = py_compile(req, catalog)
-        except CompileError as e:
-            return {"ok": False, "code": e.code, "message": e.message,
-                    "details": e.details}
-        sql = render(plan)
+    res = services.run_query(request=request, execute=False)
+    if res.error_code:
+        return {
+            "ok": False,
+            "code": res.error_code,
+            "message": res.validation_message,
+            "details": res.error_details,
+        }
     return {
         "ok": True,
-        "sql": sql,
-        "anchor": plan.anchor.dataset_name if plan.anchor else None,
-        "joined_datasets": plan.joined_datasets,
-        "is_valid": 0 if plan.chasm_warning or plan.unresolved else 1,
-        "warning": plan.chasm_warning,
-        "unresolved": plan.unresolved,
+        "sql": res.compiled_sql,
+        "anchor": res.anchor_dataset,
+        "joined_datasets": res.joined_datasets or [],
+        "is_valid": res.is_valid,
+        "warning": res.validation_message if res.is_valid == 0 else None,
+        "unresolved": res.unresolved,
     }
 
 
@@ -107,42 +76,41 @@ def semantic_execute(request: Dict[str, Any]) -> Dict[str, Any]:
     """Compile and execute a query request, returning up to 500 rows."""
     if not isinstance(request, dict):
         raise ValueError("request must be a JSON object")
-    req = _to_compile_request(request)
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        catalog = DbCatalog(cur, catalog_db=db)
-        try:
-            plan = py_compile(req, catalog)
-        except CompileError as e:
-            return {"ok": False, "code": e.code, "message": e.message}
-        if plan.unresolved:
-            return {"ok": False, "code": "UNRESOLVED_JOIN",
-                    "message": f"Unresolved datasets: {plan.unresolved}"}
-        if plan.chasm_warning:
-            return {"ok": False, "code": "CHASM_TRAP",
-                    "message": plan.chasm_warning}
-        sql = render(plan)
-        cur.execute(sql)
-        cols = [d[0] for d in (cur.description or [])]
-        rows = [list(r) for r in (cur.fetchall() or [])[:500]]
+    res = services.run_query(request=request, execute=True)
+    if res.error_code:
+        return {
+            "ok": False,
+            "code": res.error_code,
+            "message": res.validation_message,
+        }
+    if res.unresolved:
+        return {
+            "ok": False,
+            "code": "UNRESOLVED_JOIN",
+            "message": res.validation_message,
+        }
+    if res.is_valid == 0:
+        return {
+            "ok": False,
+            "code": "CHASM_TRAP",
+            "message": res.validation_message,
+        }
+    exe = res.execution
     return {
         "ok": True,
-        "sql": sql,
-        "columns": cols,
-        "rows": rows,
-        "row_count": len(rows),
+        "sql": res.compiled_sql,
+        "columns": exe.columns if exe else [],
+        "rows": exe.rows if exe else [],
+        "row_count": exe.row_count if exe else 0,
     }
 
 
 def semantic_export_osi(model: str) -> Dict[str, Any]:
     """Export a semantic model as OSI 0.1.x YAML."""
-    if not model:
-        raise ValueError("model is required")
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        text = export_osi_yaml(cur, db, model)
-    if text is None:
-        raise ValueError(f"Unknown model: {model}")
+    try:
+        text = services.export_osi_for_model(model_name=model)
+    except services.EntityNotFound as e:
+        raise ValueError(str(e))
     return {"model": model, "yaml": text}
 
 

@@ -246,14 +246,20 @@ class DbCatalog:
 
     def find_relationship_by_role(self, model_id: int,
                                   role_name: str) -> Optional[RelationshipRow]:
+        # Match either ``role_name`` (preferred) or ``relationship_name``
+        # (fallback). Many seed models set only relationship_name; the
+        # AMBIGUOUS_PATH error already advertises that name as the
+        # disambiguation prefix, so the parser must accept it too.
         r = self._fetchone(
             f"""SELECT r.relationship_id, r.relationship_name,
                        r.from_dataset_id, r.to_dataset_id,
                        r.cardinality, r.role_name
                   FROM {self.db}.RELATIONSHIP r
                   JOIN {self.db}.DATASET df ON df.dataset_id = r.from_dataset_id
-                 WHERE df.model_id = ? AND r.role_name = ?""",
-            model_id, role_name,
+                 WHERE df.model_id = ?
+                   AND (r.role_name = ?
+                        OR (r.role_name IS NULL AND r.relationship_name = ?))""",
+            model_id, role_name, role_name,
         )
         if not r:
             return None

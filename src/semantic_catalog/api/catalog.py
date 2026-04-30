@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 
 from ..db import get_pool, rows_as_dicts
+from .. import services
 from .models import (
     DescribeAttribute,
     DescribeResponse,
@@ -197,21 +198,18 @@ def search(
     model: Optional[str] = Query(None, description="Restrict to a single model"),
     limit: int = Query(50, ge=1, le=500),
 ):
-    """Wraps ``demo_user.m_semantic_search`` for the GUI."""
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        cur.execute(f"EXEC {db}.m_semantic_search(?, ?)", (q, model))
-        out: List[SearchHit] = []
-        for r in cur.fetchall()[:limit]:
-            out.append(SearchHit(
-                entity_type=str(r[0]).strip(),
-                entity_name=str(r[1]).strip(),
-                parent_name=(str(r[2]).strip() if r[2] else None),
-                description=(r[3] or None),
-                synonyms=(str(r[4]) if r[4] else None),
-                relevance=int(r[5] or 0),
-            ))
-        return out
+    hits = services.search_catalog(term=q, model=model, limit=limit)
+    return [
+        SearchHit(
+            entity_type=h.entity_type,
+            entity_name=h.entity_name,
+            parent_name=h.parent_name,
+            description=h.description,
+            synonyms=h.synonyms,
+            relevance=h.relevance,
+        )
+        for h in hits
+    ]
 
 
 @router.get("/describe", response_model=DescribeResponse)
@@ -220,30 +218,25 @@ def describe(
     entity_name: str = Query(...),
     model: Optional[str] = Query(None, description="Required for FIELD when name collides"),
 ):
-    """Wraps ``demo_user.m_semantic_describe`` and returns structured rows."""
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        cur.execute(
-            f"EXEC {db}.m_semantic_describe(?, ?, ?)",
-            (entity_type.upper(), entity_name, model),
+    try:
+        result = services.describe_entity(
+            entity_type=entity_type, entity_name=entity_name, model=model,
         )
-        rows = cur.fetchall()
-        attrs = [
+    except services.EntityNotFound as e:
+        raise HTTPException(404, str(e))
+    return DescribeResponse(
+        entity_type=result.entity_type,
+        entity_name=result.entity_name,
+        model_name=result.model_name,
+        attributes=[
             DescribeAttribute(
-                attr_ordinal=int(r[0]),
-                attr_key=str(r[1]).strip(),
-                attr_value=(str(r[2]) if r[2] is not None else ""),
+                attr_ordinal=a.attr_ordinal,
+                attr_key=a.attr_key,
+                attr_value=a.attr_value,
             )
-            for r in rows
-        ]
-        if not attrs:
-            raise HTTPException(404, f"Unknown {entity_type} '{entity_name}'")
-        return DescribeResponse(
-            entity_type=entity_type.upper(),
-            entity_name=entity_name,
-            model_name=model,
-            attributes=attrs,
-        )
+            for a in result.attributes
+        ],
+    )
 
 
 @router.get("/models/{model_name}/tree")

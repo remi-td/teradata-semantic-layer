@@ -103,10 +103,33 @@ def from_mapping(payload: Any) -> CompileRequest:
             direction=d.get("direction", "ASC"),
         )
 
+    def _token(item: Any, kind: str) -> str:
+        """Coerce one dimension/metric token to its string form.
+
+        Plain strings pass through. Dicts of the shape ``{"field": ...,
+        "via": ...}`` (a common agent mistake) are translated into the
+        ``role.field`` token the compiler natively understands. Anything
+        else raises so the caller sees a clear error instead of a
+        downstream ``AttributeError``.
+        """
+        if isinstance(item, str):
+            return item
+        if isinstance(item, dict):
+            field_name = item.get("field") or item.get("name")
+            via = item.get("via") or item.get("role") or item.get("through")
+            if field_name and via:
+                return f"{via}.{field_name}"
+            if field_name:
+                return str(field_name)
+        raise ValueError(
+            f"{kind} entries must be strings (e.g. 'dataset.field' or "
+            f"'role.field'); got {item!r}"
+        )
+
     return CompileRequest(
         model=data["model"],
-        metrics=list(data.get("metrics") or []),
-        dimensions=list(data.get("dimensions") or []),
+        metrics=[_token(m, "metric") for m in (data.get("metrics") or [])],
+        dimensions=[_token(d, "dimension") for d in (data.get("dimensions") or [])],
         where=[_filter(x) for x in (data.get("where") or [])],
         having=[_filter(x) for x in (data.get("having") or [])],
         sort=[_sort(x) for x in (data.get("sort") or [])],

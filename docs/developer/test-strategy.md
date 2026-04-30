@@ -109,7 +109,7 @@ sums fan out through each other**.
 Defense: the catalog refuses the request with a `CHASM_WARNING` message
 (is_valid = 0). The caller is expected to split into two per-grain queries
 and merge client-side. `C01` verifies this refusal. A proper symmetric-aggregate
-sub-SELECT pattern is future work (documented in `workflow-review.md`).
+sub-SELECT pattern is future work.
 
 ### Role-playing dimension
 

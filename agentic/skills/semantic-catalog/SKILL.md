@@ -7,7 +7,7 @@ description: Install, administer, and query the Teradata Semantic Catalog — a 
 
 This skill is self-contained: it covers install, administration, and
 every agent-facing workflow for the Teradata Semantic Catalog
-(`https://github.com/remi-td/semantic-catalog`). Load it whenever the
+(`https://github.com/remi-td/teradata-semantic-layer`). Load it whenever the
 user wants governed SQL answers over Teradata or needs to build/inspect
 a semantic model.
 
@@ -47,7 +47,7 @@ input):
 ## 2 · Install (fresh Teradata)
 
 ```bash
-git clone https://github.com/remi-td/semantic-catalog.git
+git clone https://github.com/remi-td/teradata-semantic-layer.git
 cd semantic-catalog
 pip install .
 

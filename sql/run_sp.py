@@ -13,12 +13,17 @@ import os
 import sys
 import teradatasql
 
-HOST = os.environ.get("TERADATA_HOST", "mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com")
-USER = os.environ.get("TERADATA_USER", "demo_user")
-PASSWORD = os.environ.get("TERADATA_PASSWORD", "demo_user")
+# Connection resolved from DATABASE_URI (or TERADATA_HOST/USER/PASSWORD fallback).
+# Make the in-repo package importable when this script runs from the repo root
+# without `pip install -e .`.
+_REPO_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
+if os.path.isdir(_REPO_SRC) and _REPO_SRC not in sys.path:
+    sys.path.insert(0, _REPO_SRC)
+from semantic_catalog.config import load_settings  # noqa: E402
 
 def run(paths):
-    conn = teradatasql.connect(host=HOST, user=USER, password=PASSWORD)
+    s = load_settings()
+    conn = teradatasql.connect(host=s.host, user=s.user, password=s.password)
     cur = conn.cursor()
     failures = 0
     for p in paths:

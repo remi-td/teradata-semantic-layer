@@ -53,7 +53,7 @@ suite (fake catalog) should stay green on every branch.
 
 ## Reporting issues
 
-- File an issue at https://github.com/remi-td/semantic-catalog/issues.
+- File an issue at https://github.com/remi-td/teradata-semantic-layer/issues.
 - For compiler bugs, include the request JSON, the compiled SQL, and
   (if possible) the catalog state (`/api/export/osi/<model>`).
 

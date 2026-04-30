@@ -47,10 +47,10 @@ dev = [
 semantic-catalog = "semantic_catalog.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/remi-td/semantic-catalog"
-Documentation = "https://github.com/remi-td/semantic-catalog#readme"
-Issues = "https://github.com/remi-td/semantic-catalog/issues"
-Repository = "https://github.com/remi-td/semantic-catalog"
+Homepage = "https://github.com/remi-td/teradata-semantic-layer"
+Documentation = "https://github.com/remi-td/teradata-semantic-layer#readme"
+Issues = "https://github.com/remi-td/teradata-semantic-layer/issues"
+Repository = "https://github.com/remi-td/teradata-semantic-layer"
 
 [tool.setuptools.packages.find]
 where = ["src"]

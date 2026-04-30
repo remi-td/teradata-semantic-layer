@@ -138,11 +138,9 @@ if __name__ == "__main__":
     for k, v in translate(payload).items():
         print(f"  {k!r:12} = {v!r}")
 
-    conn = teradatasql.connect(
-        host=os.environ.get("TERADATA_HOST",
-             "mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com"),
-        user=os.environ.get("TERADATA_USER", "demo_user"),
-        password=os.environ.get("TERADATA_PASSWORD", "demo_user"))
+    from semantic_catalog.config import load_settings
+    s = load_settings()
+    conn = teradatasql.connect(host=s.host, user=s.user, password=s.password)
     cur = conn.cursor()
     result = compile_from_json(cur, payload)
     print("\nResult:")

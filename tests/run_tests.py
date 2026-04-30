@@ -65,10 +65,15 @@ from semantic_catalog.compiler.request import (  # noqa: E402
 from semantic_catalog.compiler import DbCatalog, compile as py_compile, render  # noqa: E402
 from semantic_catalog.compiler.errors import CompileError  # noqa: E402
 
-HOST = os.environ.get("TERADATA_HOST", "mcp-vikzqtnd0db0nglk.env.clearscape.teradata.com")
-USER = os.environ.get("TERADATA_USER", "demo_user")
-PASS = os.environ.get("TERADATA_PASSWORD", "demo_user")
-CATALOG_DB = os.environ.get("CATALOG_DB", "demo_user")
+from semantic_catalog.config import load_settings  # noqa: E402
+
+_SETTINGS = load_settings()
+HOST = _SETTINGS.host
+USER = _SETTINGS.user
+PASS = _SETTINGS.password
+# CATALOG_DB lets the test runner target a non-default database (e.g. sem_engine)
+# without overriding the connection-level default database.
+CATALOG_DB = os.environ.get("CATALOG_DB", _SETTINGS.database)
 CASES_DIR = Path(__file__).resolve().parent / "cases"
 DEFAULT_REPORT = Path(__file__).resolve().parent.parent / "test-reports" / "test-results.md"
 

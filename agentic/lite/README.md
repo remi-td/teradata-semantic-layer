@@ -10,8 +10,8 @@ Edition](https://github.com/Teradata/teradata-mcp-server).
 
 | Tool                  | Backed by                         | What an agent can do                              |
 |-----------------------|-----------------------------------|---------------------------------------------------|
-| `semantic.search`     | macro `m_semantic_search`         | Find metrics / datasets / fields by business term |
-| `semantic.describe`   | macro `m_semantic_describe`       | Get expressions, AI context, joins, format spec   |
+| `semantic_search`     | macro `m_semantic_search`         | Find metrics / datasets / fields by business term |
+| `semantic_describe`   | macro `m_semantic_describe`       | Get expressions, AI context, joins, format spec   |
 
 What lite does **not** include:
 
@@ -124,5 +124,5 @@ processes (if any) sit between the agent and the catalog tables.
   `%(name)s` placeholders. CE binds via SQLAlchemy `text()`, which only
   honours `:name`. Restore the `:term`/`:model`/`:entity_type`/etc.
   placeholders in `semantic_catalog_objects.yml`.
-- **Empty `semantic.search` results across the board**: confirm at
+- **Empty `semantic_search` results across the board**: confirm at
   least one model is loaded — `SELECT model_name FROM <db>.SEMANTIC_MODEL`.

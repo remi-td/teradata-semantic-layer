@@ -141,11 +141,11 @@ The server speaks the standard MCP **Streamable HTTP** transport at
 
 | Tool                    | Delegates to                                |
 |-------------------------|---------------------------------------------|
-| `semantic.search`       | `sp_semantic_search`                        |
-| `semantic.describe`     | `sp_semantic_describe`                      |
-| `semantic.compile`      | Python compiler                             |
-| `semantic.execute`      | Python compiler + execute                   |
-| `semantic.export_osi`   | `exporter.osi.export_osi_yaml`              |
+| `semantic_search`       | `sp_semantic_search`                        |
+| `semantic_describe`     | `sp_semantic_describe`                      |
+| `semantic_compile`      | Python compiler                             |
+| `semantic_execute`      | Python compiler + execute                   |
+| `semantic_export_osi`   | `exporter.osi.export_osi_yaml`              |
 
 ### Protocol
 

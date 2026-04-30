@@ -181,8 +181,8 @@ def test_tools_list_returns_five_named_tools(mcp):
     body = client.call("tools/list")
     names = {t["name"] for t in body["result"]["tools"]}
     assert names == {
-        "semantic.search", "semantic.describe", "semantic.compile",
-        "semantic.execute", "semantic.export_osi",
+        "semantic_search", "semantic_describe", "semantic_compile",
+        "semantic_execute", "semantic_export_osi",
     }
 
 
@@ -193,7 +193,7 @@ def test_search_tool_calls_sp_semantic_search(mcp):
         cols=["entity_type", "entity_name", "parent_name",
               "description", "synonyms", "relevance"],
     )
-    body = client.call_tool("semantic.search", {"term": "revenue"})
+    body = client.call_tool("semantic_search", {"term": "revenue"})
     inner = body["result"]["structuredContent"]["result"]
     assert inner["count"] == 1
     assert inner["hits"][0]["entity_name"] == "revenue"
@@ -202,7 +202,7 @@ def test_search_tool_calls_sp_semantic_search(mcp):
 
 def test_search_tool_rejects_missing_term(mcp):
     client, _ = mcp
-    body = client.call_tool("semantic.search", {})
+    body = client.call_tool("semantic_search", {})
     # Missing required arg → MCP returns isError + content describing the
     # validation failure (Pydantic error from FastMCP arg parsing).
     assert body["result"]["isError"] is True
@@ -214,7 +214,7 @@ def test_describe_tool_round_trip(mcp):
         [(1, "name", "revenue"), (2, "type", "SIMPLE")],
         cols=["attr_ordinal", "attr_key", "attr_value"],
     )
-    body = client.call_tool("semantic.describe", {
+    body = client.call_tool("semantic_describe", {
         "entity_type": "METRIC", "entity_name": "revenue",
     })
     inner = body["result"]["structuredContent"]["result"]
@@ -231,7 +231,7 @@ def test_export_osi_tool_passthrough(mcp, monkeypatch):
         return "version: '0.1.1'\nsemantic_model:\n- name: x\n"
 
     monkeypatch.setattr("semantic_catalog.mcp.tools.export_osi_yaml", _fake)
-    body = client.call_tool("semantic.export_osi", {"model": "x"})
+    body = client.call_tool("semantic_export_osi", {"model": "x"})
     inner = body["result"]["structuredContent"]["result"]
     assert "version" in inner["yaml"]
     assert called["model"] == "x"
@@ -241,7 +241,7 @@ def test_compile_tool_surfaces_compile_errors(mcp):
     client, pool = mcp
     # Simulate UnknownModel: model lookup returns no rows.
     pool.cur.script([], cols=["model_id"])
-    body = client.call_tool("semantic.compile", {
+    body = client.call_tool("semantic_compile", {
         "request": {"model": "ghost", "metrics": ["x"]},
     })
     inner = body["result"]["structuredContent"]["result"]

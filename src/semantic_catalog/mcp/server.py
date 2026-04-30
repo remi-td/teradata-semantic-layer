@@ -82,7 +82,7 @@ def build_mcp_server() -> FastMCP:
     )
 
     @mcp.tool(
-        name="semantic.search",
+        name="semantic_search",
         description=(
             "Full-text search across the catalog: dataset / metric / "
             "view names, descriptions, AI synonyms. Returns ranked hits."
@@ -96,7 +96,7 @@ def build_mcp_server() -> FastMCP:
         return _tools.semantic_search(term=term, model=model, limit=limit)
 
     @mcp.tool(
-        name="semantic.describe",
+        name="semantic_describe",
         description=(
             "Full metadata for one entity: dataset / metric / view / "
             "field / model. Returns (attr_ordinal, attr_key, attr_value) "
@@ -114,7 +114,7 @@ def build_mcp_server() -> FastMCP:
         )
 
     @mcp.tool(
-        name="semantic.compile",
+        name="semantic_compile",
         description=(
             "Compile a structured query request to Teradata SQL. "
             "Returns the compiled SQL plus anchor/joined datasets and "
@@ -125,7 +125,7 @@ def build_mcp_server() -> FastMCP:
         return _tools.semantic_compile(request=request)
 
     @mcp.tool(
-        name="semantic.execute",
+        name="semantic_execute",
         description=(
             "Compile and execute a query request, returning up to 500 "
             "rows along with the SQL that was run."
@@ -135,7 +135,7 @@ def build_mcp_server() -> FastMCP:
         return _tools.semantic_execute(request=request)
 
     @mcp.tool(
-        name="semantic.export_osi",
+        name="semantic_export_osi",
         description="Export a semantic model as OSI 0.1.x YAML.",
     )
     def semantic_export_osi(model: str) -> Dict[str, Any]:

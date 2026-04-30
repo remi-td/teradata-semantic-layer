@@ -8,8 +8,8 @@ without asking a human to write SQL.
   (Streamable HTTP / JSON-RPC) runs inside the same process as the REST
   API and the GUI. Point Claude Code, Cursor, or any MCP-aware client
   at `/mcp/` (or bridge Claude Desktop via `mcp-remote`) and five
-  agent-ready tools surface: `semantic.search`, `semantic.describe`,
-  `semantic.compile`, `semantic.execute`, `semantic.export_osi`.
+  agent-ready tools surface: `semantic_search`, `semantic_describe`,
+  `semantic_compile`, `semantic_execute`, `semantic_export_osi`.
 - **Catalog is a schema, not a service.** Metadata lives in ordinary
   Teradata tables and is fully queryable with SQL.
 - **Cubes are datasets.** Start with one cube on day one; decompose
@@ -97,7 +97,7 @@ cp agentic/lite/semantic_catalog_objects.yml /path/to/mcp-config-dir/
 teradata-mcp-server --config_dir /path/to/mcp-config-dir       # CE picks up *_objects.yml
 ```
 
-Two tools register: `semantic.search` and `semantic.describe`. An
+Two tools register: `semantic_search` and `semantic_describe`. An
 agent has enough hints to write SQL by hand (metric expressions,
 relationships, AI context all surface through `describe`), but **does
 not** get compile-time SQL generation, EXPLAIN validation, or
@@ -199,7 +199,7 @@ contract.
 | `/api/import/template`                  | GET  | Minimal example payload                  |
 | `/api/export/osi/{model}`               | GET  | Export model as OSI 0.1.x YAML           |
 | `/api/health` · `/api/ping`             | GET  | Process liveness · DB connectivity       |
-| `/mcp/`                                 | POST | MCP Streamable-HTTP / JSON-RPC transport. Tools: `semantic.search`, `semantic.describe`, `semantic.compile`, `semantic.execute`, `semantic.export_osi`. Hand-curl is awkward — point an MCP client at it. |
+| `/mcp/`                                 | POST | MCP Streamable-HTTP / JSON-RPC transport. Tools: `semantic_search`, `semantic_describe`, `semantic_compile`, `semantic_execute`, `semantic_export_osi`. Hand-curl is awkward — point an MCP client at it. |
 
 Auto-generated OpenAPI at [/docs](http://127.0.0.1:8080/docs).
 

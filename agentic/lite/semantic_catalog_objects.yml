@@ -16,10 +16,10 @@
 # model when it doesn't know the model name yet.
 #
 # Tool names are dotted to match the convention used by the full Python
-# server (`semantic.search`, etc.) so agents that already know the full
+# server (`semantic_search`, etc.) so agents that already know the full
 # version's tool surface can talk to lite without changes.
 
-semantic.search:
+semantic_search:
   type: tool
   description: |
     Full-text search across the Teradata Semantic Catalog. Returns ranked
@@ -39,7 +39,7 @@ semantic.search:
       type_hint: string
       default: null
 
-semantic.describe:
+semantic_describe:
   type: tool
   description: |
     Return the full attribute pack for a single catalog entity as
@@ -68,7 +68,7 @@ semantic.describe:
       type_hint: string
       default: null
 
-# NOTE: there is no `semantic.export_osi` tool in the lite manifest.
+# NOTE: there is no `semantic_export_osi` tool in the lite manifest.
 # Teradata MCP Server CE's tool executor calls cursor.fetchall() once
 # without nextset(), so a Teradata stored procedure that returns YAML as
 # a dynamic result set never surfaces to agents. Rather than carry an

@@ -160,7 +160,7 @@ semantic-catalog serving at http://127.0.0.1:8080</code></pre>
         <span class="demo-step-num">5</span>
         <div>
           <h4>Execute or hand to an agent</h4>
-          <p>The same request that the GUI compiled is the one <code>semantic.execute</code> runs over MCP.</p>
+          <p>The same request that the GUI compiled is the one <code>semantic_execute</code> runs over MCP.</p>
         </div>
       </div>
     </div>
@@ -350,7 +350,7 @@ Polymorphic attachments  (entity_type + entity_id)
     <div class="arch-caption">One process. One connection pool. One identity. The catalog is a set of tables in the same database that holds the data.</div>
 
     <div class="pipeline">
-      <h3 class="pipeline-h">What happens to a <code>semantic.execute</code> request</h3>
+      <h3 class="pipeline-h">What happens to a <code>semantic_execute</code> request</h3>
       <ol class="pipeline-steps">
         <li><b>Auth</b> — bearer token verified with <code>hmac.compare_digest</code>; body parsed into Pydantic.</li>
         <li><b>Translate</b> — API model converted to the compiler's own dataclass request. No shared types.</li>

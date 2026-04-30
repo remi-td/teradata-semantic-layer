@@ -23,9 +23,9 @@ a semantic model.
     builder.
   - **REST API** — `/api/*` for compile / execute / import / export.
   - **Embedded MCP server** — Streamable HTTP / JSON-RPC at `/mcp/`,
-    exposing five tools agents call directly: `semantic.search`,
-    `semantic.describe`, `semantic.compile`, `semantic.execute`,
-    `semantic.export_osi`.
+    exposing five tools agents call directly: `semantic_search`,
+    `semantic_describe`, `semantic_compile`, `semantic_execute`,
+    `semantic_export_osi`.
 - **Pure-Python compiler.** No `bteq`, no external Teradata MCP server,
   no stored-procedure compiler. One `pip install`.
 
@@ -85,7 +85,7 @@ the rest. From an agent's POV: call them by name with their argument
 object. From the wire: it's JSON-RPC `tools/call`. Example payload:
 
 ```json
-{ "name": "semantic.search", "arguments": { "term": "revenue", "model": "tpch_orders" } }
+{ "name": "semantic_search", "arguments": { "term": "revenue", "model": "tpch_orders" } }
 ```
 
 For shell pipelines / curl, prefer the equivalent REST endpoints under
@@ -93,11 +93,11 @@ For shell pipelines / curl, prefer the equivalent REST endpoints under
 
 | Tool                    | Use when                                                                 |
 |-------------------------|--------------------------------------------------------------------------|
-| `semantic.search`       | User asks vague questions ("do we have revenue?", "find deposit metrics"). Ranked hits across every entity + synonym. |
-| `semantic.describe`     | You know the entity name and want full metadata (datasets, filters, AI context, expressions). |
-| `semantic.compile`      | Build governed SQL from a structured request. Use for "show me the SQL" queries. |
-| `semantic.execute`      | Same request, but actually run it and return rows (≤ 500).               |
-| `semantic.export_osi`   | User needs an OSI YAML dump of a model.                                  |
+| `semantic_search`       | User asks vague questions ("do we have revenue?", "find deposit metrics"). Ranked hits across every entity + synonym. |
+| `semantic_describe`     | You know the entity name and want full metadata (datasets, filters, AI context, expressions). |
+| `semantic_compile`      | Build governed SQL from a structured request. Use for "show me the SQL" queries. |
+| `semantic_execute`      | Same request, but actually run it and return rows (≤ 500).               |
+| `semantic_export_osi`   | User needs an OSI YAML dump of a model.                                  |
 
 ### Shape of a compile/execute request
 
@@ -126,7 +126,7 @@ Things to know:
   `RAW`. Prefer `STRING` / `NUMBER` / `DATE`; use `RAW` only for
   BETWEEN date ranges (`"DATE 'X' AND DATE 'Y'"`). The compiler now
   regex-validates every RAW value, so arbitrary SQL will be rejected.
-- `limit: 0` means unlimited on compile; `semantic.execute` truncates
+- `limit: 0` means unlimited on compile; `semantic_execute` truncates
   at 500 rows regardless.
 
 ### Interpreting compile errors
@@ -135,8 +135,8 @@ The compiler returns structured `code` fields on failure:
 
 | Code             | What it means                                                                 | Typical fix                                                                 |
 |------------------|-------------------------------------------------------------------------------|-----------------------------------------------------------------------------|
-| `UNKNOWN_MODEL`  | No model with that name in the catalog.                                       | `semantic.search` to find the right name, or `install-example` to seed one. |
-| `UNKNOWN_METRIC` | Metric name not found in the model.                                           | Confirm via `semantic.describe(entity_type="MODEL", entity_name=…)`.        |
+| `UNKNOWN_MODEL`  | No model with that name in the catalog.                                       | `semantic_search` to find the right name, or `install-example` to seed one. |
+| `UNKNOWN_METRIC` | Metric name not found in the model.                                           | Confirm via `semantic_describe(entity_type="MODEL", entity_name=…)`.        |
 | `UNKNOWN_FIELD`  | Dimension or filter field not on the named dataset.                           | Either add the field to the model via `/api/import` or pick an alternative. |
 | `AMBIGUOUS_PATH` | More than one join path between two datasets; resolver refuses to guess.      | Add a `role_name` to one of the relationships, or request the joined datasets explicitly. |
 | `CHASM_TRAP`     | Two independent fact tables grouped by a dimension each could double-count.   | Constrain to one fact or rewrite as separate queries.                       |
@@ -351,8 +351,8 @@ inheriting your interactive shell, so `${SEMANTIC_API_TOKEN}` references
 the value defined in `env`, not your shell.
 
 The five tools surface under both client shapes as
-`semantic.search`, `semantic.describe`, `semantic.compile`,
-`semantic.execute`, `semantic.export_osi`.
+`semantic_search`, `semantic_describe`, `semantic_compile`,
+`semantic_execute`, `semantic_export_osi`.
 
 ---
 
@@ -374,7 +374,7 @@ Flag these before offering to do something the layer can't:
 - **`FORMAT_SPEC` round-trips via OSI export but not yet via
   `/api/import`.** To register format info on a metric or field today,
   INSERT directly into `FORMAT_SPEC` (entity_type + entity_id). The
-  exporter and `semantic.describe` already surface it.
+  exporter and `semantic_describe` already surface it.
 
 If the user asks for any of these, say so explicitly and offer a
 workaround.
@@ -424,13 +424,13 @@ policies are declared in the DDL but not yet consumed.
 ## 8 · Diagnostic recipes
 
 - **"Compile returned `UNKNOWN_FIELD` on `foo.bar`"** →
-  `semantic.describe(entity_type="DATASET", entity_name="foo")` — check
+  `semantic_describe(entity_type="DATASET", entity_name="foo")` — check
   if the field exists; if the field is on a different dataset, use
   `role_alias.field` or rename.
 - **"Import returned many `unknown model` errors"** → look at the
   *first* ERROR row. Everything after is cascade (the transaction
   aborted; the model insert rolled back).
-- **"Execute succeeded with zero rows"** → run `semantic.compile`,
+- **"Execute succeeded with zero rows"** → run `semantic_compile`,
   copy the SQL, run `/api/query/explain` (read-only) to confirm the
   plan. Then spot-check the filters in the GUI's Query Builder.
 - **"`/api/*` returns 401"** → `SEMANTIC_API_TOKEN` is set in the

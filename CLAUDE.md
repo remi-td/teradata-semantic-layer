@@ -11,7 +11,7 @@ was used to bootstrap the repo and remains here for reference.
 The catalog ships as a Python package **`semantic-catalog`** with a
 FastAPI-backed web GUI, a pure-Python compiler/importer/exporter, and
 an embedded MCP server. The SQL bundle is DDL + the two macros that
-back `semantic.search` / `semantic.describe` — no SQL compiler, no SQL
+back `semantic_search` / `semantic_describe` — no SQL compiler, no SQL
 importer, since v0.4.
 
 ### Layout

@@ -186,7 +186,7 @@ def test_tools_list_returns_five_named_tools(mcp):
     }
 
 
-def test_search_tool_calls_sp_semantic_search(mcp):
+def test_search_tool_calls_m_semantic_search(mcp):
     client, pool = mcp
     pool.cur.script(
         [("METRIC", "revenue", "tpch", "sum of price", None, 5)],
@@ -197,7 +197,7 @@ def test_search_tool_calls_sp_semantic_search(mcp):
     inner = body["result"]["structuredContent"]["result"]
     assert inner["count"] == 1
     assert inner["hits"][0]["entity_name"] == "revenue"
-    assert any("sp_semantic_search" in sql for sql, _ in pool.cur.calls)
+    assert any("m_semantic_search" in sql for sql, _ in pool.cur.calls)
 
 
 def test_search_tool_rejects_missing_term(mcp):

@@ -40,10 +40,7 @@ def semantic_search(
         raise ValueError("term is required")
     db = _db_name()
     with get_pool().cursor() as cur:
-        if model:
-            cur.execute(f"CALL {db}.sp_semantic_search(?, ?)", (term, model))
-        else:
-            cur.execute(f"CALL {db}.sp_semantic_search(?, NULL)", (term,))
+        cur.execute(f"EXEC {db}.m_semantic_search(?, ?)", (term, model))
         rows = cur.fetchall() or []
         cols = [d[0] for d in cur.description or []]
     hits = [dict(zip(cols, r)) for r in rows[:limit]]
@@ -64,8 +61,10 @@ def semantic_describe(
         raise ValueError("entity_type and entity_name are required")
     db = _db_name()
     with get_pool().cursor() as cur:
-        params = (entity_type, entity_name, model) if model else (entity_type, entity_name, None)
-        cur.execute(f"CALL {db}.sp_semantic_describe(?, ?, ?)", params)
+        cur.execute(
+            f"EXEC {db}.m_semantic_describe(?, ?, ?)",
+            (entity_type.upper(), entity_name, model),
+        )
         rows = cur.fetchall() or []
         cols = [d[0] for d in cur.description or []]
     return {

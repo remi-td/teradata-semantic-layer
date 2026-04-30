@@ -61,6 +61,7 @@ semantic_catalog = [
     "static/*",
     "static/assets/*",
     "sql_bundle/*.sql",
+    "examples_bundle/*/*.sql",
 ]
 
 [tool.pytest.ini_options]

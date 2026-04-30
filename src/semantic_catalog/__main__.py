@@ -180,11 +180,16 @@ def _default_sql_dir() -> str:
 
 
 def _examples_dir() -> Path:
-    """Locate the repo-root examples/ directory.
+    """Locate the examples directory.
 
-    Only shipped when installed from source; not bundled with the pip package
-    because examples are demo data, not part of the product.
+    Prefer the package-bundled ``examples_bundle/`` (shipped in the wheel,
+    currently containing only ``tpch_orders``). Fall back to the repo-root
+    ``examples/`` when running from a source checkout — that has the full
+    set of demos (school_gradebook, exec_dashboard, tpch_*).
     """
+    bundled = Path(__file__).parent / "examples_bundle"
+    if bundled.is_dir() and any(bundled.iterdir()):
+        return bundled
     repo_root = Path(__file__).parent.parent.parent
     return repo_root / "examples"
 
@@ -298,9 +303,9 @@ def _cmd_install(args: argparse.Namespace) -> int:
     """Deploy the core catalog (DDL + macros + idempotent schema extensions).
 
     With ``--with-sample NAME`` (or the alias ``--with-sample`` without a
-    name, which defaults to ``school_gradebook``), also deploys the
-    matching example after the core catalog lands so the GUI isn't empty
-    on first run.
+    name, which defaults to ``tpch_orders`` — the only example bundled in
+    the wheel), also deploys the matching example after the core catalog
+    lands so the GUI isn't empty on first run.
     """
     import teradatasql
     from .config import load_settings
@@ -348,6 +353,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
             break
 
     sample = getattr(args, "with_sample", None)
+    sample_deployed = False
     if sample and not failures:
         ex_dir = _examples_dir() / sample
         if not ex_dir.is_dir():
@@ -357,6 +363,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
             print(f"[install] --with-sample: deploying example '{sample}'")
             files = sorted(p for p in ex_dir.glob("*.sql")
                            if p.is_file() and p.name != "teardown.sql")
+            sample_failed = False
             for f in files:
                 text = _render_sql(f.read_text(), settings.catalog_db)
                 mode = _detect_mode(text)
@@ -366,9 +373,11 @@ def _cmd_install(args: argparse.Namespace) -> int:
                     print("   ok")
                 except Exception as e:  # noqa: BLE001
                     failures += 1
+                    sample_failed = True
                     print(f"   FAILED: {e}", file=sys.stderr)
                     if args.stop_on_error:
                         break
+            sample_deployed = not sample_failed
 
     cur.close()
     conn.close()
@@ -376,7 +385,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
         print(f"[install] {failures} failure(s)", file=sys.stderr)
         return 1
     print("[install] core catalog deployed"
-          + (f" (+ sample: {sample})" if sample else ""))
+          + (f" (+ sample: {sample})" if sample_deployed else ""))
     return 0
 
 
@@ -625,14 +634,16 @@ def build_parser() -> argparse.ArgumentParser:
     sp_install.add_argument(
         "--with-sample",
         nargs="?",
-        const="school_gradebook",
+        const="tpch_orders",
         default=None,
         dest="with_sample",
         metavar="NAME",
         help=(
             "Deploy a bundled example after the core catalog "
-            "(default: school_gradebook). Use without NAME to pick the default; "
-            "pass a name to choose a specific example."
+            "(default: tpch_orders — the only example shipped in the wheel). "
+            "Source-tree installs can pass other names "
+            "(school_gradebook, exec_dashboard, tpch_osi, tpch_physical, "
+            "school_physical)."
         ),
     )
     sp_install.add_argument("--stop-on-error", action="store_true")

@@ -136,7 +136,8 @@ POST /api/query/explain   # read-only EXPLAIN on the compiled SQL
 
 ## MCP integration
 
-The server exposes five MCP-compatible tools at `/mcp/tools`:
+The server speaks the standard MCP **Streamable HTTP** transport at
+`/mcp/` and surfaces five tools:
 
 | Tool                    | Delegates to                                |
 |-------------------------|---------------------------------------------|
@@ -149,11 +150,23 @@ The server exposes five MCP-compatible tools at `/mcp/tools`:
 ### Protocol
 
 ```
-GET  /mcp/tools                           List tool schemas (OpenAI-style)
-POST /mcp/tools/<tool_name>               Invoke; JSON body = args
+POST /mcp/        JSON-RPC 2.0  (Streamable HTTP — handles initialize,
+                                 tools/list, tools/call, notifications)
 ```
 
-Responses are plain JSON. An MCP protocol bridge (stdio, SSE) can wrap these endpoints, and many agent SDKs can speak to HTTP+JSON tools directly.
+The transport is JSON-RPC over HTTP with optional server-sent-event
+streaming for long responses. Hand-curl is awkward — point an MCP
+client at the URL instead. Standard clients tested against this
+endpoint:
+
+- **Claude Code / Cursor / Continue** — native HTTP MCP, configure
+  with `"url": "http://localhost:8080/mcp/"`.
+- **Claude Desktop** — stdio-only; bridge with `npx mcp-remote
+  http://localhost:8080/mcp/ --header "Authorization: Bearer $TOKEN"`.
+
+For shell-friendly access to the same five operations, use the
+equivalent REST endpoints under `/api/*` (see the API reference
+below).
 
 ### Auth
 

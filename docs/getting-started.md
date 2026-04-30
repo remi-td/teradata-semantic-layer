@@ -168,30 +168,34 @@ curl -s http://127.0.0.1:8080/api/import \
 
 ## 10. MCP tools
 
-Agents speak to the catalog through five MCP tools:
+Agents speak to the catalog through five MCP tools, served over the
+standard MCP **Streamable HTTP** (JSON-RPC) transport at `/mcp/`. Wire
+an MCP client (Claude Code / Cursor / Continue / Claude Desktop via
+`mcp-remote`) and the five `semantic.*` tools surface automatically —
+see the project README for client-specific config.
+
+For shell pipelines, the same operations exist as plain REST under
+`/api/*`:
 
 ```bash
-# List available tools
-curl -s http://127.0.0.1:8080/mcp/tools | jq .
+# Search (REST)
+curl -s -G --data-urlencode 'q=revenue' http://127.0.0.1:8080/api/search | jq .
 
-# Search
-curl -s http://127.0.0.1:8080/mcp/tools/semantic.search \
-  -H 'Content-Type: application/json' -d '{"term": "revenue"}'
-
-# Compile
-curl -s http://127.0.0.1:8080/mcp/tools/semantic.compile \
+# Compile (REST)
+curl -s -X POST http://127.0.0.1:8080/api/query/compile \
   -H 'Content-Type: application/json' \
-  -d '{"request": {"model": "tpch_orders", "metrics": ["revenue"]}}'
+  -d '{"model": "tpch_orders", "metrics": ["revenue"]}'
 ```
 
 Protect the MCP endpoints in production with a bearer token:
 
 ```bash
-export SEMANTIC_MCP_TOKEN="s0m3-very-long-random-string"
+export SEMANTIC_API_TOKEN="s0m3-very-long-random-string"
 semantic-catalog serve
 ```
 
-Clients must then send `Authorization: Bearer <token>` on every `/mcp/*` request.
+Clients must then send `Authorization: Bearer <token>` on every
+`/mcp/*` and `/api/*` request.
 
 ---
 

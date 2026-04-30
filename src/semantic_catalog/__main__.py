@@ -4,7 +4,7 @@ Commands::
 
     semantic-catalog serve [--host HOST] [--port PORT] [--reload]
     semantic-catalog ping
-    semantic-catalog install [--fresh]
+    semantic-catalog install [--force] [--with-sample [NAME]]
     semantic-catalog uninstall
     semantic-catalog install-example <name>
     semantic-catalog uninstall-example <name>
@@ -189,6 +189,32 @@ def _examples_dir() -> Path:
     return repo_root / "examples"
 
 
+def _catalog_already_installed(cur, db: str) -> bool:
+    """Return True if the semantic catalog is already deployed in ``db``.
+
+    Uses ``SEMANTIC_MODEL`` as the sentinel — it's the root catalog table
+    and is present in every successful install. dbc.TablesV stores the
+    database name in mixed case (``DataBaseName``) but compares
+    case-insensitively in Teradata, so an upper-cased lookup is fine.
+    """
+    try:
+        cur.execute(
+            "SELECT 1 FROM dbc.TablesV "
+            "WHERE DataBaseName = ? AND TableName = 'SEMANTIC_MODEL'",
+            (db,),
+        )
+        return cur.fetchone() is not None
+    except Exception:  # noqa: BLE001
+        # If the user lacks SELECT on dbc.TablesV (rare), fall back to a
+        # direct probe — a SELECT against the table itself either succeeds
+        # or fails with 3807 "object does not exist".
+        try:
+            cur.execute(f"SELECT 1 FROM {db}.SEMANTIC_MODEL WHERE 1=0")
+            return True
+        except Exception:  # noqa: BLE001
+            return False
+
+
 # Files shipped in sql/ (and sql_bundle/) — the core product. Order matters.
 # 'split'           = multi-statement DDL.
 # 'whole'           = single procedure/macro body (semicolons inside the body).
@@ -288,10 +314,32 @@ def _cmd_install(args: argparse.Namespace) -> int:
     cur = conn.cursor()
     failures = 0
 
-    if args.fresh:
-        print("[install] --fresh: dropping existing catalog objects first")
+    # `--fresh` was the original flag name; keep it as a deprecated alias.
+    force = bool(getattr(args, "force", False) or getattr(args, "fresh", False))
+    if getattr(args, "fresh", False) and not getattr(args, "force", False):
+        print("[install] --fresh is deprecated, use --force", file=sys.stderr)
+
+    already = _catalog_already_installed(cur, settings.catalog_db)
+    if already and not force:
+        print(
+            f"[error] Semantic layer already installed in database "
+            f"'{settings.catalog_db}'.\n"
+            f"        If you really want to reinstall, use --force — "
+            f"THIS WILL DROP ALL YOUR DATA.",
+            file=sys.stderr,
+        )
+        cur.close()
+        conn.close()
+        return 1
+
+    if force and already:
+        print("[install] --force: dropping existing catalog objects first")
         failures += _run_file(cur, sql_dir, "00_drop_all", mode="split",
                               catalog_db=settings.catalog_db, tolerate_errors=True)
+    elif force:
+        # `--force` on a clean DB is a no-op for the drop step; still print
+        # for transparency so users know the flag was honored.
+        print("[install] --force: no existing catalog detected, fresh install")
 
     for mode, stem in _CORE_SEQUENCE:
         failures += _run_file(cur, sql_dir, stem, mode=mode,
@@ -563,9 +611,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deploy the core catalog (DDL + stored procedures)",
     )
     sp_install.add_argument(
-        "--fresh", action="store_true",
-        help="Run 00_drop_all.sql first so install starts from a clean slate",
+        "--force", action="store_true",
+        help=(
+            "Reinstall on top of an existing catalog. DROPS every catalog "
+            "table in the target database first — destroys all model "
+            "definitions, metrics, relationships, AI context, etc. Use "
+            "with care."
+        ),
     )
+    # Deprecated alias kept so existing scripts keep working; emits a
+    # warning at runtime (see _cmd_install).
+    sp_install.add_argument("--fresh", action="store_true", help=argparse.SUPPRESS)
     sp_install.add_argument(
         "--with-sample",
         nargs="?",

@@ -4,10 +4,11 @@ A **Teradata-native semantic layer** that lets AI agents and BI tools
 ask business questions against a governed metric + dimension model —
 without asking a human to write SQL.
 
-- **Speaks MCP out of the box.** A Model Context Protocol server runs
-  inside the same process as the REST API and the GUI. Point Claude,
-  Cursor, or any MCP client at `/mcp/tools` and you have five
-  agent-ready tools: `semantic.search`, `semantic.describe`,
+- **Speaks MCP out of the box.** A real Model Context Protocol server
+  (Streamable HTTP / JSON-RPC) runs inside the same process as the REST
+  API and the GUI. Point Claude Code, Cursor, or any MCP-aware client
+  at `/mcp/` (or bridge Claude Desktop via `mcp-remote`) and five
+  agent-ready tools surface: `semantic.search`, `semantic.describe`,
   `semantic.compile`, `semantic.execute`, `semantic.export_osi`.
 - **Catalog is a schema, not a service.** Metadata lives in ordinary
   Teradata tables and is fully queryable with SQL.
@@ -52,8 +53,8 @@ semantic-catalog install --with-sample            # defaults to school_gradebook
 
 # 3. Launch the GUI + REST + MCP server
 semantic-catalog serve
-# → http://127.0.0.1:8080           (GUI, Swagger at /docs)
-# → http://127.0.0.1:8080/mcp/tools (MCP endpoint)
+# → http://127.0.0.1:8080      (GUI, Swagger at /docs)
+# → http://127.0.0.1:8080/mcp/ (MCP Streamable-HTTP endpoint)
 ```
 
 Open the GUI — the seeded model is visible immediately. The workspace
@@ -198,8 +199,7 @@ contract.
 | `/api/import/template`                  | GET  | Minimal example payload                  |
 | `/api/export/osi/{model}`               | GET  | Export model as OSI 0.1.x YAML           |
 | `/api/health` · `/api/ping`             | GET  | Process liveness · DB connectivity       |
-| `/mcp/tools`                            | GET  | MCP tool catalogue                       |
-| `/mcp/tools/{name}`                     | POST | Invoke an MCP tool (`semantic.search`, `semantic.describe`, `semantic.compile`, `semantic.execute`, `semantic.export_osi`) |
+| `/mcp/`                                 | POST | MCP Streamable-HTTP / JSON-RPC transport. Tools: `semantic.search`, `semantic.describe`, `semantic.compile`, `semantic.execute`, `semantic.export_osi`. Hand-curl is awkward — point an MCP client at it. |
 
 Auto-generated OpenAPI at [/docs](http://127.0.0.1:8080/docs).
 
@@ -217,7 +217,7 @@ Auto-generated OpenAPI at [/docs](http://127.0.0.1:8080/docs).
 │  auth.py     — shared bearer-token gate                 │
 │  api/        — models/tree/graph/search/describe/       │
 │                query/import/export                      │
-│  mcp/        — MCP tool endpoints (/mcp/tools/*)        │
+│  mcp/        — MCP JSON-RPC server (Streamable HTTP)    │
 │  compiler/   — pure-Python: resolver, joins, render      │
 │  importer/   — pure-Python: YAML → catalog writes        │
 │  exporter/   — pure-Python: catalog → OSI YAML           │

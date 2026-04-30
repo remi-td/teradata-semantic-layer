@@ -22,9 +22,10 @@ a semantic model.
   - **GUI** — `/` renders a Cytoscape graph of the catalog + a query
     builder.
   - **REST API** — `/api/*` for compile / execute / import / export.
-  - **Embedded MCP server** — `/mcp/tools/*` exposing five tools agents
-    can call directly: `semantic.search`, `semantic.describe`,
-    `semantic.compile`, `semantic.execute`, `semantic.export_osi`.
+  - **Embedded MCP server** — Streamable HTTP / JSON-RPC at `/mcp/`,
+    exposing five tools agents call directly: `semantic.search`,
+    `semantic.describe`, `semantic.compile`, `semantic.execute`,
+    `semantic.export_osi`.
 - **Pure-Python compiler.** No `bteq`, no external Teradata MCP server,
   no stored-procedure compiler. One `pip install`.
 
@@ -78,18 +79,17 @@ Common mistakes:
 
 ## 3 · When to use which MCP tool
 
-All five tools live at `POST /mcp/tools/<name>`. Body is
-`{ "args": ... }` for direct JSON or the `args` object directly
-depending on the MCP client; when calling from Python/curl, the args go
-in the body root:
+All five tools surface through the standard MCP **Streamable HTTP**
+endpoint at `/mcp/` — wire your client (see §6) and the protocol does
+the rest. From an agent's POV: call them by name with their argument
+object. From the wire: it's JSON-RPC `tools/call`. Example payload:
 
-```http
-POST /mcp/tools/semantic.search
-Authorization: Bearer <token>
-Content-Type: application/json
-
-{ "term": "revenue", "model": "tpch_orders" }
+```json
+{ "name": "semantic.search", "arguments": { "term": "revenue", "model": "tpch_orders" } }
 ```
+
+For shell pipelines / curl, prefer the equivalent REST endpoints under
+`/api/*` (see §5).
 
 | Tool                    | Use when                                                                 |
 |-------------------------|--------------------------------------------------------------------------|
@@ -260,69 +260,97 @@ metrics:
 curl -s -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/models | jq
 ```
 
+> Below is the **REST** entry point (handy for shell pipelines / curl).
+> AI agents should use the **MCP** tools instead — see §6 for client
+> wiring; the tool names mirror the REST endpoints.
+
 ### Natural-language search
 
 ```bash
-curl -s -X POST http://localhost:8080/mcp/tools/semantic.search \
-     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"term":"revenue","model":"tpch_orders"}' | jq '.hits[0:5]'
+curl -s -G --data-urlencode "q=revenue" --data-urlencode "model=tpch_orders" \
+     -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8080/api/search | jq '.[0:5]'
 ```
 
 ### Compile SQL only
 
 ```bash
-curl -s -X POST http://localhost:8080/mcp/tools/semantic.compile \
+curl -s -X POST http://localhost:8080/api/query/compile \
      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"request":{
+     -d '{
             "model":"tpch_orders",
             "metrics":["revenue"],
             "dimensions":["nation.n_name"],
             "sort":[{"field":"revenue","direction":"DESC"}],
-            "limit":10}}' | jq '.sql'
+            "limit":10}' | jq '.sql'
 ```
 
 ### Compile + execute
 
 ```bash
-curl -s -X POST http://localhost:8080/mcp/tools/semantic.execute \
+curl -s -X POST http://localhost:8080/api/query/execute \
      -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"request":{
+     -d '{
             "model":"tpch_orders",
             "metrics":["revenue","promo_share"],
             "dimensions":["customer.c_mktsegment","nation.n_name","region.r_name"],
-            "having":[{"metric":"promo_share","op":">","value":0.1,"type":"NUMBER"}]}}' \
+            "having":[{"metric":"promo_share","op":">","value":0.1,"type":"NUMBER"}]}' \
      | jq '.row_count, .rows[0]'
 ```
 
 ### Export OSI YAML
 
 ```bash
-curl -s -X POST http://localhost:8080/mcp/tools/semantic.export_osi \
-     -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-     -d '{"model":"tpch_orders"}' | jq -r '.yaml' > model.osi.yaml
+curl -s -H "Authorization: Bearer $TOKEN" \
+     http://localhost:8080/api/export/osi/tpch_orders > model.osi.yaml
 ```
 
 ---
 
-## 6 · Claude-Code / Cursor MCP client wiring
+## 6 · MCP client wiring
 
-Add to the agent's MCP configuration (shape depends on client — here's
-a minimal example for Claude Code):
+The server speaks the standard MCP **Streamable HTTP** transport at
+`/mcp`. Two client shapes cover every common case.
+
+### Claude Code, Cursor, Continue (native HTTP MCP)
 
 ```jsonc
 {
   "mcpServers": {
     "semantic-catalog": {
-      "url": "http://localhost:8080/mcp",
+      "url": "http://localhost:8080/mcp/",
       "headers": { "Authorization": "Bearer ${SEMANTIC_API_TOKEN}" }
     }
   }
 }
 ```
 
-When the server exposes plain HTTP JSON-RPC, a generic MCP HTTP bridge
-works. For stdio-mode clients, wrap the HTTP surface with the
-Anthropic `mcp-proxy`. The five tools will show up as
+### Claude Desktop (stdio-only — bridge via `mcp-remote`)
+
+`claude_desktop_config.json` only accepts stdio servers, so use
+`mcp-remote` (npm) to proxy stdio ↔ HTTP:
+
+```jsonc
+{
+  "mcpServers": {
+    "semantic-catalog": {
+      "command": "npx",
+      "args": [
+        "-y", "mcp-remote",
+        "http://localhost:8080/mcp/",
+        "--header", "Authorization: Bearer ${SEMANTIC_API_TOKEN}"
+      ],
+      "env": { "SEMANTIC_API_TOKEN": "<paste-token-here>" }
+    }
+  }
+}
+```
+
+The `env` block is required — Claude Desktop spawns `npx` without
+inheriting your interactive shell, so `${SEMANTIC_API_TOKEN}` references
+the value defined in `env`, not your shell.
+
+The five tools surface under both client shapes as
 `semantic.search`, `semantic.describe`, `semantic.compile`,
 `semantic.execute`, `semantic.export_osi`.
 

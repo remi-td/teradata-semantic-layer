@@ -24,17 +24,31 @@ def _expected_token() -> Optional[str]:
     return os.environ.get("SEMANTIC_API_TOKEN") or os.environ.get("SEMANTIC_MCP_TOKEN")
 
 
+def check_token(authorization: Optional[str]) -> Optional[tuple[int, str]]:
+    """Pure-Python bearer-token check.
+
+    Returns ``None`` on success (or when no token env var is set). On
+    failure, returns ``(status_code, error_message)`` so the caller can
+    surface it through whichever framework — FastAPI, ASGI middleware,
+    a CLI tool — without coupling to ``fastapi.HTTPException``.
+    """
+    expected = _expected_token()
+    if not expected:
+        return None
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return (401, "missing bearer token")
+    token = authorization.split(None, 1)[1].strip()
+    if not hmac.compare_digest(token, expected):
+        return (403, "invalid bearer token")
+    return None
+
+
 def require_token(authorization: Optional[str] = Header(None)) -> None:
     """FastAPI dependency. Raises 401/403 on auth failure.
 
     No-ops when no token env var is set (local dev). When set, requires
     ``Authorization: Bearer <token>`` with a constant-time match.
     """
-    expected = _expected_token()
-    if not expected:
-        return
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(401, "missing bearer token")
-    token = authorization.split(None, 1)[1].strip()
-    if not hmac.compare_digest(token, expected):
-        raise HTTPException(403, "invalid bearer token")
+    err = check_token(authorization)
+    if err is not None:
+        raise HTTPException(err[0], err[1])

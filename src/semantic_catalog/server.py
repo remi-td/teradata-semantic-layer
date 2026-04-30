@@ -10,6 +10,7 @@ Usage::
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 from pathlib import Path
 
@@ -23,17 +24,70 @@ from .api.catalog import router as catalog_router
 from .api.export import router as export_router
 from .api.importer import router as import_router
 from .api.query import router as query_router
-from .auth import require_token
+from .auth import check_token, require_token
 from .config import load_settings
-from .mcp import router as mcp_router
+from .mcp import build_mcp_server
 
 log = logging.getLogger(__name__)
 
 STATIC_DIR = Path(__file__).parent / "static"
 
 
+class _AuthGate:
+    """ASGI middleware: enforce bearer-token auth in front of a sub-app.
+
+    FastAPI's ``Depends(require_token)`` only fires for routes the
+    FastAPI router owns; mounted ASGI sub-apps (like the FastMCP
+    Streamable-HTTP transport) bypass it. This thin wrapper restores
+    the gate using the same :func:`semantic_catalog.auth.check_token`
+    contract.
+    """
+
+    def __init__(self, app):
+        self._app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            # Pass-through for lifespan / websocket / etc.
+            await self._app(scope, receive, send)
+            return
+        header_value = None
+        for name, value in scope.get("headers") or []:
+            if name == b"authorization":
+                header_value = value.decode("latin-1")
+                break
+        err = check_token(header_value)
+        if err is not None:
+            status, message = err
+            body = (f'{{"error":"{message}"}}').encode("utf-8")
+            await send({
+                "type": "http.response.start",
+                "status": status,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
+        await self._app(scope, receive, send)
+
+
 def create_app() -> FastAPI:
     settings = load_settings()
+
+    # Build the FastMCP server up-front so we can chain its session-manager
+    # lifespan into FastAPI. ``streamable_http_app()`` returns a Starlette
+    # app whose own lifespan drives ``session_manager.run()``; when mounted
+    # as a sub-app that lifespan never fires, so we have to run it from the
+    # parent.
+    mcp_server = build_mcp_server()
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        async with mcp_server.session_manager.run():
+            yield
+
     app = FastAPI(
         title="Teradata Semantic Catalog",
         description=(
@@ -41,6 +95,7 @@ def create_app() -> FastAPI:
             "semantic catalog that lives inside Teradata Vantage."
         ),
         version=__version__,
+        lifespan=lifespan,
     )
     origins = [o.strip() for o in settings.cors_allow_origins.split(",") if o.strip()] or ["*"]
     # CORS spec: `*` + credentials is illegal (browsers reject it). If the
@@ -69,7 +124,12 @@ def create_app() -> FastAPI:
     app.include_router(query_router,   dependencies=auth_dep)
     app.include_router(import_router,  dependencies=auth_dep)
     app.include_router(export_router,  dependencies=auth_dep)
-    app.include_router(mcp_router)
+
+    # MCP Streamable-HTTP transport (JSON-RPC) at /mcp. Mounted as an
+    # ASGI sub-app — FastAPI's Depends mechanism can't gate sub-app
+    # routes, so we wrap with a small ASGI middleware that re-uses the
+    # same bearer-token contract.
+    app.mount("/mcp", _AuthGate(mcp_server.streamable_http_app()))
 
     # Health / info — `/api/health` stays public (liveness for load
     # balancers). `/api/ping` requires auth because it exercises the DB.

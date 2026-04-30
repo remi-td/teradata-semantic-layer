@@ -1,241 +1,152 @@
-"""MCP-compatible tool endpoints.
+"""MCP server — Streamable HTTP JSON-RPC transport.
 
-Protocol shape:
+This is the real Model Context Protocol surface. We register the five
+catalog tools with ``FastMCP`` and expose them as a Streamable-HTTP
+ASGI app, mounted at ``/mcp`` on the main FastAPI application
+(see :mod:`semantic_catalog.server`).
 
-    GET  /mcp/tools                    → list tool schemas
-    POST /mcp/tools/{name}             → invoke tool, args in JSON body
+Clients that work today:
+- Claude Code (``"url": "http://localhost:8080/mcp"``)
+- Cursor / Continue (same shape)
+- Claude Desktop via the ``mcp-remote`` stdio bridge:
+  ``npx mcp-remote http://localhost:8080/mcp/ --header "Authorization: Bearer $TOKEN"``
 
-Auth: when the ``SEMANTIC_MCP_TOKEN`` environment variable is set, every
-request must carry ``Authorization: Bearer <token>``. When unset, no
-auth is applied (dev default — safe because localhost-only in the
-default uvicorn bind).
+Auth is enforced by an ASGI middleware in ``server.py`` that gates the
+mount with the same ``SEMANTIC_API_TOKEN`` bearer-token contract as the
+REST ``/api/*`` endpoints.
 
-We deliberately don't pull the ``mcp`` SDK as a hard dependency. The
-endpoints speak plain JSON so an MCP bridge can wrap them, and they
-also stand on their own as a REST API for agents that aren't MCP-aware.
+The tool implementations live in :mod:`.tools`; this module is purely
+a transport adapter.
 """
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional
+import os
+from typing import Any, Dict, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
-from ..auth import require_token
-from ..compiler import DbCatalog, compile as py_compile, render
-from ..compiler.errors import CompileError
-from ..compiler.request import from_mapping as _to_compile_request
-from ..db import get_pool
-from ..exporter import export_osi_yaml
+from . import tools as _tools
 
 log = logging.getLogger(__name__)
 
 
-# -- tool schemas -----------------------------------------------------
+def _transport_security() -> TransportSecuritySettings:
+    """Build the FastMCP transport-security settings.
 
-TOOL_SCHEMAS: List[Dict[str, Any]] = [
-    {
-        "name": "semantic.search",
-        "description": (
-            "Full-text search across the catalog: dataset/metric/view "
-            "names, descriptions, AI synonyms. Returns ranked hits."
+    Defaults to localhost-only (the FastMCP default), which protects
+    browser-resident attackers from DNS-rebinding their way into a
+    locally-bound MCP server. Operators behind a reverse proxy or
+    listening on non-localhost can extend the allowlist via:
+
+    - ``SEMANTIC_MCP_ALLOWED_HOSTS``   — comma-separated host:port patterns
+    - ``SEMANTIC_MCP_ALLOWED_ORIGINS`` — comma-separated ``http(s)://`` URIs
+    - ``SEMANTIC_MCP_DISABLE_HOST_CHECK=1`` — turn off the check entirely
+
+    Tests use ``SEMANTIC_MCP_DISABLE_HOST_CHECK=1`` because Starlette's
+    TestClient sends ``Host: testserver``.
+    """
+    if os.environ.get("SEMANTIC_MCP_DISABLE_HOST_CHECK") in {"1", "true", "TRUE"}:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    base_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    base_origins = ["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"]
+    extra_hosts = [h.strip() for h in os.environ.get("SEMANTIC_MCP_ALLOWED_HOSTS", "").split(",") if h.strip()]
+    extra_origins = [o.strip() for o in os.environ.get("SEMANTIC_MCP_ALLOWED_ORIGINS", "").split(",") if o.strip()]
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=base_hosts + extra_hosts,
+        allowed_origins=base_origins + extra_origins,
+    )
+
+
+def build_mcp_server() -> FastMCP:
+    """Construct a fresh FastMCP server with all five tools registered.
+
+    A fresh instance is built per ``create_app()`` call so tests can
+    spin up isolated servers without leftover state.
+
+    ``streamable_http_path='/'`` makes the JSON-RPC endpoint the root of
+    the returned Starlette app; we then mount that app at ``/mcp`` in
+    FastAPI so the public endpoint is ``http://host:port/mcp``.
+    """
+    mcp = FastMCP(
+        name="semantic-catalog",
+        instructions=(
+            "Teradata Semantic Catalog — search, describe, compile, "
+            "execute, and export governed metric/dimension models."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "term":  {"type": "string"},
-                "model": {"type": ["string", "null"]},
-                "limit": {"type": "integer", "default": 50},
-            },
-            "required": ["term"],
-        },
-    },
-    {
-        "name": "semantic.describe",
-        "description": (
-            "Full metadata for one entity: dataset / metric / view / field. "
-            "Returns (attr_ordinal, attr_key, attr_value) triples."
+        stateless_http=True,
+        streamable_http_path="/",
+        transport_security=_transport_security(),
+    )
+
+    @mcp.tool(
+        name="semantic.search",
+        description=(
+            "Full-text search across the catalog: dataset / metric / "
+            "view names, descriptions, AI synonyms. Returns ranked hits."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "entity_type": {"type": "string",
-                                "enum": ["DATASET", "METRIC", "VIEW", "FIELD", "MODEL"]},
-                "entity_name": {"type": "string"},
-                "model":       {"type": ["string", "null"]},
-            },
-            "required": ["entity_type", "entity_name"],
-        },
-    },
-    {
-        "name": "semantic.compile",
-        "description": (
-            "Compile a structured query request to Teradata SQL. Returns "
-            "the compiled SQL plus anchor/joined datasets and validity."
+    )
+    def semantic_search(
+        term: str,
+        model: Optional[str] = None,
+        limit: int = 50,
+    ) -> Dict[str, Any]:
+        return _tools.semantic_search(term=term, model=model, limit=limit)
+
+    @mcp.tool(
+        name="semantic.describe",
+        description=(
+            "Full metadata for one entity: dataset / metric / view / "
+            "field / model. Returns (attr_ordinal, attr_key, attr_value) "
+            "triples covering description, AI context, format spec, and "
+            "structural metadata."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {"type": "object"},
-            },
-            "required": ["request"],
-        },
-    },
-    {
-        "name": "semantic.execute",
-        "description": (
-            "Compile and execute a query request, returning up to 500 rows."
+    )
+    def semantic_describe(
+        entity_type: str,
+        entity_name: str,
+        model: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return _tools.semantic_describe(
+            entity_type=entity_type, entity_name=entity_name, model=model
+        )
+
+    @mcp.tool(
+        name="semantic.compile",
+        description=(
+            "Compile a structured query request to Teradata SQL. "
+            "Returns the compiled SQL plus anchor/joined datasets and "
+            "validity flags."
         ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "request": {"type": "object"},
-            },
-            "required": ["request"],
-        },
-    },
-    {
-        "name": "semantic.export_osi",
-        "description": "Export a semantic model as OSI 0.1.x YAML.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "model": {"type": "string"},
-            },
-            "required": ["model"],
-        },
-    },
-]
+    )
+    def semantic_compile(request: Dict[str, Any]) -> Dict[str, Any]:
+        return _tools.semantic_compile(request=request)
+
+    @mcp.tool(
+        name="semantic.execute",
+        description=(
+            "Compile and execute a query request, returning up to 500 "
+            "rows along with the SQL that was run."
+        ),
+    )
+    def semantic_execute(request: Dict[str, Any]) -> Dict[str, Any]:
+        return _tools.semantic_execute(request=request)
+
+    @mcp.tool(
+        name="semantic.export_osi",
+        description="Export a semantic model as OSI 0.1.x YAML.",
+    )
+    def semantic_export_osi(model: str) -> Dict[str, Any]:
+        return _tools.semantic_export_osi(model=model)
+
+    return mcp
 
 
-router = APIRouter(prefix="/mcp", tags=["mcp"], dependencies=[Depends(require_token)])
+def mcp_app():
+    """Return the ASGI app that handles MCP Streamable-HTTP traffic."""
+    return build_mcp_server().streamable_http_app()
 
 
-# -- helpers ----------------------------------------------------------
-
-def _db_name() -> str:
-    from ..config import load_settings
-    return load_settings().catalog_db
-
-
-# -- endpoints --------------------------------------------------------
-
-@router.get("/tools")
-def list_tools() -> Dict[str, Any]:
-    return {"tools": TOOL_SCHEMAS}
-
-
-@router.post("/tools/semantic.search")
-def tool_search(args: Dict[str, Any]) -> Dict[str, Any]:
-    term = (args or {}).get("term")
-    if not term:
-        raise HTTPException(400, "term is required")
-    model = (args or {}).get("model")
-    limit = int((args or {}).get("limit") or 50)
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        if model:
-            cur.execute(
-                f"CALL {db}.sp_semantic_search(?, ?)",
-                (term, model),
-            )
-        else:
-            cur.execute(
-                f"CALL {db}.sp_semantic_search(?, NULL)",
-                (term,),
-            )
-        rows = cur.fetchall() or []
-        cols = [d[0] for d in cur.description or []]
-    hits = [dict(zip(cols, r)) for r in rows[:limit]]
-    return {"hits": hits, "count": len(hits)}
-
-
-@router.post("/tools/semantic.describe")
-def tool_describe(args: Dict[str, Any]) -> Dict[str, Any]:
-    et = (args or {}).get("entity_type")
-    en = (args or {}).get("entity_name")
-    model = (args or {}).get("model")
-    if not (et and en):
-        raise HTTPException(400, "entity_type and entity_name are required")
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        params = (et, en, model) if model else (et, en, None)
-        cur.execute(f"CALL {db}.sp_semantic_describe(?, ?, ?)", params)
-        rows = cur.fetchall() or []
-        cols = [d[0] for d in cur.description or []]
-    return {
-        "entity_type": et,
-        "entity_name": en,
-        "attributes": [dict(zip(cols, r)) for r in rows],
-    }
-
-
-@router.post("/tools/semantic.compile")
-def tool_compile(args: Dict[str, Any]) -> Dict[str, Any]:
-    request_payload = (args or {}).get("request")
-    if not isinstance(request_payload, dict):
-        raise HTTPException(400, "request must be a mapping")
-    req = _to_compile_request(request_payload)
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        catalog = DbCatalog(cur, catalog_db=db)
-        try:
-            plan = py_compile(req, catalog)
-        except CompileError as e:
-            return {"ok": False, "code": e.code, "message": e.message,
-                    "details": e.details}
-        sql = render(plan)
-    return {
-        "ok": True,
-        "sql": sql,
-        "anchor": plan.anchor.dataset_name if plan.anchor else None,
-        "joined_datasets": plan.joined_datasets,
-        "is_valid": 0 if plan.chasm_warning or plan.unresolved else 1,
-        "warning": plan.chasm_warning,
-        "unresolved": plan.unresolved,
-    }
-
-
-@router.post("/tools/semantic.execute")
-def tool_execute(args: Dict[str, Any]) -> Dict[str, Any]:
-    request_payload = (args or {}).get("request")
-    if not isinstance(request_payload, dict):
-        raise HTTPException(400, "request must be a mapping")
-    req = _to_compile_request(request_payload)
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        catalog = DbCatalog(cur, catalog_db=db)
-        try:
-            plan = py_compile(req, catalog)
-        except CompileError as e:
-            return {"ok": False, "code": e.code, "message": e.message}
-        if plan.unresolved:
-            return {"ok": False, "code": "UNRESOLVED_JOIN",
-                    "message": f"Unresolved datasets: {plan.unresolved}"}
-        if plan.chasm_warning:
-            return {"ok": False, "code": "CHASM_TRAP",
-                    "message": plan.chasm_warning}
-        sql = render(plan)
-        cur.execute(sql)
-        cols = [d[0] for d in (cur.description or [])]
-        rows = [list(r) for r in (cur.fetchall() or [])[:500]]
-    return {
-        "ok": True,
-        "sql": sql,
-        "columns": cols,
-        "rows": rows,
-        "row_count": len(rows),
-    }
-
-
-@router.post("/tools/semantic.export_osi")
-def tool_export_osi(args: Dict[str, Any]) -> Dict[str, Any]:
-    model = (args or {}).get("model")
-    if not model:
-        raise HTTPException(400, "model is required")
-    db = _db_name()
-    with get_pool().cursor() as cur:
-        text = export_osi_yaml(cur, db, model)
-    if text is None:
-        raise HTTPException(404, f"Unknown model: {model}")
-    return {"model": model, "yaml": text}
+__all__ = ["build_mcp_server", "mcp_app"]

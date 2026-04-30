@@ -318,7 +318,7 @@ Polymorphic attachments  (entity_type + entity_id)
         <div class="arch-box arch-fastapi">
           <div class="arch-box-title">FastAPI process <span class="arch-tag">uvicorn · stateless · N replicas</span></div>
           <div class="arch-routes">
-            <span class="route">/mcp/tools/*</span>
+            <span class="route">/mcp/ (JSON-RPC)</span>
             <span class="route">/api/query/*</span>
             <span class="route">/api/catalog/*</span>
             <span class="route">/api/import</span>
@@ -499,22 +499,35 @@ Polymorphic attachments  (entity_type + entity_id)
         <pre class="code"><code><span class="tok-c">$</span> semantic-catalog serve
 semantic-catalog serving at http://127.0.0.1:8080
  → GUI  http://127.0.0.1:8080/
- → MCP  http://127.0.0.1:8080/mcp/tools</code></pre>
+ → MCP  http://127.0.0.1:8080/mcp/  (Streamable HTTP)</code></pre>
       </div>
     </div>
 
     <div class="start-next">
       <h3>Wire an agent to it</h3>
-      <p>Claude Desktop / Cursor / any MCP-aware client:</p>
+      <p>The server speaks the standard MCP <b>Streamable HTTP</b> transport at <code>/mcp/</code>.</p>
+      <p><b>Claude Code / Cursor / Continue</b> (native HTTP MCP):</p>
       <pre class="code"><code><span class="tok-k">{</span>
   <span class="tok-s">"mcpServers"</span>: <span class="tok-k">{</span>
     <span class="tok-s">"semantic-catalog"</span>: <span class="tok-k">{</span>
-      <span class="tok-s">"url"</span>: <span class="tok-s">"http://localhost:8080/mcp"</span>,
+      <span class="tok-s">"url"</span>: <span class="tok-s">"http://localhost:8080/mcp/"</span>,
       <span class="tok-s">"headers"</span>: <span class="tok-k">{</span> <span class="tok-s">"Authorization"</span>: <span class="tok-s">"Bearer ${SEMANTIC_API_TOKEN}"</span> <span class="tok-k">}</span>
     <span class="tok-k">}</span>
   <span class="tok-k">}</span>
 <span class="tok-k">}</span></code></pre>
-      <p>The five <code>semantic.*</code> tools surface automatically: search, describe, compile, execute, export_osi.</p>
+      <p><b>Claude Desktop</b> is stdio-only — bridge via <code>mcp-remote</code>:</p>
+      <pre class="code"><code><span class="tok-k">{</span>
+  <span class="tok-s">"mcpServers"</span>: <span class="tok-k">{</span>
+    <span class="tok-s">"semantic-catalog"</span>: <span class="tok-k">{</span>
+      <span class="tok-s">"command"</span>: <span class="tok-s">"npx"</span>,
+      <span class="tok-s">"args"</span>: <span class="tok-k">[</span><span class="tok-s">"-y"</span>, <span class="tok-s">"mcp-remote"</span>,
+               <span class="tok-s">"http://localhost:8080/mcp/"</span>,
+               <span class="tok-s">"--header"</span>, <span class="tok-s">"Authorization: Bearer ${SEMANTIC_API_TOKEN}"</span><span class="tok-k">]</span>,
+      <span class="tok-s">"env"</span>: <span class="tok-k">{</span> <span class="tok-s">"SEMANTIC_API_TOKEN"</span>: <span class="tok-s">"&lt;paste-token-here&gt;"</span> <span class="tok-k">}</span>
+    <span class="tok-k">}</span>
+  <span class="tok-k">}</span>
+<span class="tok-k">}</span></code></pre>
+      <p>Five <code>semantic.*</code> tools surface automatically: search, describe, compile, execute, export_osi.</p>
     </div>
 
     <div class="start-ctas">

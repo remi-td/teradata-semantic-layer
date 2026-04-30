@@ -39,7 +39,7 @@ src/semantic_catalog/
     orchestrator.py   — compile(req, catalog) entry point
   importer/           — pure-Python catalog writer (replaces sp_semantic_import)
   exporter/           — OSI YAML emitter
-  mcp/                — embedded MCP tools (/mcp/tools/*)
+  mcp/                — embedded MCP server (Streamable HTTP / JSON-RPC at /mcp/)
   static/             — single-page GUI
   sql_bundle/         — DDL + m_semantic_search + m_semantic_describe macros only
 sql/                  — canonical source SQL (mirrors sql_bundle/)

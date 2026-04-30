@@ -1,0 +1,77 @@
+# Teradata Semantic Catalog — lite-mode tools for Teradata MCP Server CE.
+#
+# Drop this file into the directory you pass to teradata-mcp-server via
+# --config_dir. The filename suffix `_objects.yml` is required: the CE
+# server globs for that pattern when discovering custom tool manifests.
+# The server will register two tools that hit catalog macros already
+# deployed by `semantic-catalog install`. No external runtime required.
+#
+# Replace `demo_user` below with the database where you installed the
+# catalog (matches whatever `DATABASE_URI` pointed at during install).
+#
+# Parameters use SQLAlchemy text() placeholder syntax: :name. The CE
+# server wraps each `sql:` body in sqlalchemy.text(...).bindparams(**args),
+# which only recognises `:name` — not `%(name)s` or `?`.
+# Defaults are provided for `model` so an agent can search across every
+# model when it doesn't know the model name yet.
+#
+# Tool names are dotted to match the convention used by the full Python
+# server (`semantic.search`, etc.) so agents that already know the full
+# version's tool surface can talk to lite without changes.
+
+semantic.search:
+  type: tool
+  description: |
+    Full-text search across the Teradata Semantic Catalog. Returns ranked
+    hits for datasets, fields, metrics, and semantic views, scored by
+    name, label, AI-context synonyms, and description matches. Use this
+    when the user asks a vague question ("what revenue metrics do we
+    have?", "find anything about customers"). Pass model=NULL to search
+    every model.
+  sql: |
+    EXEC demo_user.m_semantic_search(:term, :model)
+  parameters:
+    term:
+      description: Search term (matched case-insensitively).
+      type_hint: string
+    model:
+      description: Optional model name to scope the search. NULL = all models.
+      type_hint: string
+      default: null
+
+semantic.describe:
+  type: tool
+  description: |
+    Return the full attribute pack for a single catalog entity as
+    (attr_ordinal, attr_key, attr_value) rows. For a METRIC: includes the
+    ANSI_SQL and TERADATA expressions, primary dataset, AI instructions,
+    synonyms, format, and the field references the metric consumes. For a
+    DATASET: includes the field list, primary key, outgoing/incoming
+    relationships with cardinalities. For a FIELD passed as
+    'dataset.field': includes expression, label, data type, and any
+    format spec. This is the agent's primary tool for getting the SQL
+    fragments and join paths it needs to write a query by hand.
+  sql: |
+    EXEC demo_user.m_semantic_describe(:entity_type, :entity_name, :model)
+  parameters:
+    entity_type:
+      description: One of MODEL, DATASET, FIELD, METRIC, VIEW.
+      type_hint: string
+    entity_name:
+      description: |
+        The entity name. For FIELD, prefer the disambiguated
+        'dataset.field' form when the same field name occurs on multiple
+        datasets in the model.
+      type_hint: string
+    model:
+      description: Optional model scope. Required when entity names collide across models.
+      type_hint: string
+      default: null
+
+# NOTE: there is no `semantic.export_osi` tool in the lite manifest.
+# Teradata MCP Server CE's tool executor calls cursor.fetchall() once
+# without nextset(), so a Teradata stored procedure that returns YAML as
+# a dynamic result set never surfaces to agents. Rather than carry an
+# SQL-side exporter that can't be called as a tool, lite ships OSI
+# export as the offline CLI `semantic-catalog export <model>` — the same
+# Python exporter the full deployment exposes via /api/export/osi.

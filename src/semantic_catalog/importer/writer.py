@@ -15,7 +15,10 @@ Supported kinds:
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+from ..compiler.catalog import MetricFilterRow, MetricRow
+from ..compiler.resolver import compose_filtered_expression
 
 
 class ImportError_(Exception):
@@ -606,3 +609,108 @@ def import_entity(cur, db: str, model_name: str,
         return "ERROR", f"no writer for kind '{kind}'", None
     except ImportError_ as e:
         return "ERROR", str(e), None
+
+
+# ---- post-import: denormalize filtered-metric expressions -----------
+
+def synthesize_filtered_expressions(cur, db: str, model_name: str) -> int:
+    """For every filtered SIMPLE metric in the model (``base_metric_id``
+    set, no row in METRIC_EXPRESSION), synthesize the
+    ``AGG(CASE WHEN … THEN <arg> END)`` expression from the base metric
+    + METRIC_FILTER rows and upsert it into METRIC_EXPRESSION for both
+    TERADATA and ANSI_SQL dialects.
+
+    The synthesis uses the same routine the runtime compiler relies on
+    (``compiler.resolver.compose_filtered_expression``), so the stored
+    expression matches what the compiler would compose at query time.
+    The full deployment ignores these rows (its compiler walks
+    base+filters live for chasm-trap detection); the lite deployment
+    serves them through ``m_semantic_describe`` as ``expression_TERADATA``
+    /``expression_ANSI_SQL`` so an agent can write SQL by hand.
+
+    Returns the number of metrics updated.
+    """
+    model_id = _resolve_model_id(cur, db, model_name)
+    if model_id is None:
+        return 0
+
+    # Pick filtered SIMPLE metrics (base_metric_id IS NOT NULL).
+    cur.execute(
+        f"SELECT m.metric_id, m.metric_name, m.metric_type, m.primary_dataset_id, "
+        f"       m.base_metric_id, "
+        f"       bm.metric_name, bm.aggregate_fn, CAST(bm.aggregate_arg AS VARCHAR(4000)) "
+        f"  FROM {db}.METRIC m "
+        f"  JOIN {db}.METRIC bm ON bm.metric_id = m.base_metric_id "
+        f" WHERE m.model_id = ? AND m.base_metric_id IS NOT NULL",
+        (model_id,),
+    )
+    metrics = cur.fetchall() or []
+
+    updated = 0
+    for r in metrics:
+        metric_id = int(r[0])
+        base = MetricRow(
+            metric_id=int(r[4]),
+            metric_name=str(r[5]).strip(),
+            description=None,
+            metric_type=None,
+            primary_dataset_id=None,
+            base_metric_id=None,
+            aggregate_fn=(str(r[6]).strip() if r[6] is not None else None),
+            aggregate_arg=(str(r[7]) if r[7] is not None else None),
+            expression_teradata=None,
+        )
+
+        cur.execute(
+            f"SELECT mf.filter_ord, mf.field_id, f.dataset_id, d.dataset_name, "
+            f"       f.field_name, mf.op, CAST(mf.filter_value AS VARCHAR(500)) "
+            f"  FROM {db}.METRIC_FILTER mf "
+            f"  JOIN {db}.FIELD f   ON f.field_id   = mf.field_id "
+            f"  JOIN {db}.DATASET d ON d.dataset_id = f.dataset_id "
+            f" WHERE mf.metric_id = ? "
+            f" ORDER BY mf.filter_ord",
+            (metric_id,),
+        )
+        filter_rows: List[MetricFilterRow] = [
+            MetricFilterRow(
+                filter_ord=int(fr[0]), field_id=int(fr[1]),
+                dataset_id=int(fr[2]), dataset_name=str(fr[3]).strip(),
+                field_name=str(fr[4]).strip(),
+                op=str(fr[5]).strip(), filter_value=str(fr[6]),
+            )
+            for fr in (cur.fetchall() or [])
+        ]
+        if not filter_rows or base.aggregate_fn is None or base.aggregate_arg is None:
+            # Either malformed (compiler will reject at query time) or a
+            # plain alias of the base — nothing useful to denormalize.
+            continue
+
+        try:
+            expression = compose_filtered_expression(base, filter_rows)
+        except Exception:
+            # Don't block the import; the runtime compiler will surface
+            # the real error if/when the metric is queried.
+            continue
+
+        for dialect in ("TERADATA", "ANSI_SQL"):
+            row = _fetchone(
+                cur,
+                f"SELECT 1 FROM {db}.METRIC_EXPRESSION "
+                f" WHERE metric_id = ? AND dialect = ?",
+                metric_id, dialect,
+            )
+            if row:
+                cur.execute(
+                    f"UPDATE {db}.METRIC_EXPRESSION SET expression = ? "
+                    f" WHERE metric_id = ? AND dialect = ?",
+                    (expression, metric_id, dialect),
+                )
+            else:
+                cur.execute(
+                    f"INSERT INTO {db}.METRIC_EXPRESSION "
+                    f"(metric_id, dialect, expression) VALUES (?, ?, ?)",
+                    (metric_id, dialect, expression),
+                )
+        updated += 1
+
+    return updated

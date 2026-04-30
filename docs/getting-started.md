@@ -199,5 +199,5 @@ Clients must then send `Authorization: Bearer <token>` on every `/mcp/*` request
 
 - **[Server Guide](server-guide.md)** — deployment, configuration, scaling, MCP integration, troubleshooting.
 - **[Design Guidelines](design-guidelines.md)** — the catalog's patterns, anti-patterns, and not-yet-supported features.
-- **Design document** — `semantic_catalog_design_v2.md` at the repo root.
-- **Test suite** — `tests/run_tests.py --engine both --report TEST_RESULTS.md` for the full regression report.
+- **Design document** — [`developer/semantic-catalog-design.md`](developer/semantic-catalog-design.md).
+- **Test suite** — `tests/run_tests.py --engine both` writes its report to `test-reports/test-results.md` (gitignored). Pass `--report PATH` to override.

@@ -70,7 +70,7 @@ USER = os.environ.get("TERADATA_USER", "demo_user")
 PASS = os.environ.get("TERADATA_PASSWORD", "demo_user")
 CATALOG_DB = os.environ.get("CATALOG_DB", "demo_user")
 CASES_DIR = Path(__file__).resolve().parent / "cases"
-DEFAULT_REPORT = Path(__file__).resolve().parent.parent / "TEST_RESULTS.md"
+DEFAULT_REPORT = Path(__file__).resolve().parent.parent / "test-reports" / "test-results.md"
 
 
 # ---------------------------------------------------------------- output
@@ -387,7 +387,9 @@ def main():
         print(f"No cases matched in {CASES_DIR}", file=sys.stderr)
         sys.exit(1)
 
-    report_fh = open(args.report, "w")
+    report_path = Path(args.report)
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_fh = open(report_path, "w")
     sys.stdout = Tee(sys.__stdout__, report_fh)
 
     engines = [args.engine]

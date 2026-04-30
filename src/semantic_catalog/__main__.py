@@ -8,6 +8,8 @@ Commands::
     semantic-catalog uninstall
     semantic-catalog install-example <name>
     semantic-catalog uninstall-example <name>
+    semantic-catalog import <file> [--model NAME] [--dry-run]
+    semantic-catalog export <model> [--output FILE]
     semantic-catalog deploy [--sql-dir DIR] [--include FILENAME...]   # low-level escape hatch
 """
 from __future__ import annotations
@@ -211,7 +213,6 @@ _CORE_SEQUENCE: list[tuple[str, str]] = [
     ("split", "07_comments"),
     ("split", "08_collect_stats"),
     ("split", "09_seed_enums"),
-    ("whole", "20_export_osi"),
     ("whole", "30_sp_semantic_search"),
     ("whole", "31_sp_semantic_describe"),
 ]
@@ -389,6 +390,130 @@ def _cmd_install_example(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_import(args: argparse.Namespace) -> int:
+    """Load a YAML/JSON model document into the catalog (one transaction).
+
+    Mirrors the ``POST /api/import`` endpoint but runs without spinning up
+    the FastAPI server — the lite deployment's authoring path.
+    """
+    import yaml as _yaml
+    import teradatasql
+    from .config import load_settings
+    from .importer import import_entity, ordered_items, synthesize_filtered_expressions
+
+    settings = load_settings()
+    path = Path(args.file).resolve()
+    if not path.is_file():
+        print(f"[error] file not found: {path}", file=sys.stderr)
+        return 2
+    try:
+        doc = _yaml.safe_load(path.read_text()) or {}
+    except _yaml.YAMLError as e:
+        print(f"[error] could not parse YAML/JSON: {e}", file=sys.stderr)
+        return 2
+    try:
+        items = ordered_items(doc)
+    except ValueError as e:
+        print(f"[error] {e}", file=sys.stderr)
+        return 2
+    if not items:
+        print("[info] empty payload — nothing to do")
+        return 0
+
+    model_name = args.model
+    if not model_name:
+        models = doc.get("models") or []
+        if models and isinstance(models[0], dict) and models[0].get("name"):
+            model_name = models[0]["name"]
+    if not model_name:
+        print("[error] could not infer model name; pass --model NAME or include "
+              "a 'models:' block in the document", file=sys.stderr)
+        return 2
+
+    db = settings.catalog_db
+    conn = teradatasql.connect(**settings.driver_kwargs())
+    try:
+        try:
+            conn.autocommit = False
+        except Exception:
+            pass
+        cur = conn.cursor()
+        ok = err = 0
+        for idx, (kind, payload) in enumerate(items, start=1):
+            try:
+                status, message, _ = import_entity(cur, db, model_name, kind, payload)
+            except Exception as e:  # noqa: BLE001
+                status, message = "ERROR", f"crash: {e}"
+            tag = "OK " if status == "OK" else "ERR"
+            print(f"  [{idx:>3}] {tag} {kind:<16} {message}")
+            if status == "OK":
+                ok += 1
+            else:
+                err += 1
+        if err == 0 and not args.dry_run:
+            synth_n = synthesize_filtered_expressions(cur, db, model_name)
+            if synth_n:
+                print(f"  [synth] denormalized {synth_n} filtered metric expression(s)")
+            conn.commit()
+            print(f"[import] committed {ok}/{ok} entities into model '{model_name}'")
+            return 0
+        conn.rollback()
+        if args.dry_run:
+            print(f"[import] --dry-run: rolled back ({ok} ok, {err} errors)")
+        else:
+            print(f"[import] {err} error(s); rolled back transaction", file=sys.stderr)
+        return 0 if (args.dry_run and err == 0) else 1
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    """Render a semantic model as OSI 0.1.x YAML.
+
+    Reads the model with the same Python exporter the FastAPI server
+    uses (``/api/export/osi``) — single source of truth, no SP needed.
+    The lite (server-less) deployment uses this CLI as its OSI export
+    path.
+    """
+    import teradatasql
+    from .config import load_settings
+    from .exporter import export_osi_yaml
+
+    settings = load_settings()
+    conn = teradatasql.connect(**settings.driver_kwargs())
+    try:
+        cur = conn.cursor()
+        try:
+            text = export_osi_yaml(cur, settings.catalog_db, args.model)
+        finally:
+            try:
+                cur.close()
+            except Exception:
+                pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    if text is None:
+        print(f"[error] unknown model: {args.model}", file=sys.stderr)
+        return 2
+    if args.output:
+        Path(args.output).write_text(text)
+        print(f"[export] wrote {len(text):,} chars to {args.output}", file=sys.stderr)
+    else:
+        sys.stdout.write(text)
+    return 0
+
+
 def _cmd_uninstall_example(args: argparse.Namespace) -> int:
     """Run examples/<name>/teardown.sql."""
     import teradatasql
@@ -476,6 +601,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sp_uninstall_ex.add_argument("name")
     sp_uninstall_ex.set_defaults(func=_cmd_uninstall_example)
+
+    sp_import = sub.add_parser(
+        "import",
+        help="Load a YAML/JSON model document into the catalog (one transaction)",
+    )
+    sp_import.add_argument("file", help="Path to a YAML or JSON model document")
+    sp_import.add_argument(
+        "--model",
+        help="Target model name. If omitted, taken from the first entry of "
+             "the document's models: block.",
+    )
+    sp_import.add_argument(
+        "--dry-run", action="store_true",
+        help="Validate and report per-entity status, then roll back unconditionally",
+    )
+    sp_import.set_defaults(func=_cmd_import)
+
+    sp_export = sub.add_parser(
+        "export",
+        help="Render a semantic model as OSI 0.1.x YAML (stdout by default)",
+    )
+    sp_export.add_argument("model", help="Semantic model name to export")
+    sp_export.add_argument(
+        "-o", "--output",
+        help="Write YAML to this file instead of stdout",
+    )
+    sp_export.set_defaults(func=_cmd_export)
 
     # Low-level escape hatch for ad-hoc file deploys (previously the primary
     # install mechanism). Kept for scripts and tests; not the recommended UX.

@@ -16,14 +16,13 @@ without asking a human to write SQL.
   rewrite.
 - **The compiler is pure Python.** Resolution, join-graph walk,
   filtered-metric composition, chasm-trap detection, and SQL rendering
-  (via `sqlglot`) all happen in-process. No SPL, no `bteq`, no external
-  middleware.
+  (via `sqlglot`) all happen in-process. No middleware.
 - **One-command install.** `semantic-catalog install` deploys every
   catalog object in one shot; the GUI and MCP ship with the package.
 
 ---
 
-## Why this, versus MetricFlow / Cube / Honeydew
+## Why this, versus alternatives
 
 The semantic layer runs **inside Teradata**, not in front of it. That
 means:
@@ -33,11 +32,11 @@ means:
 - The compiler returns native Teradata SQL with PI-aware joins, not
   pushdown from a generic planner.
 - Progressive maturity — a "cube" (flat query with labelled dimensions
-  and measures) is a legal first-class dataset. Most competitors force
-  full decomposition up front.
+  and measures) is a legal first-class dataset. No need for full
+  model decomposition up front.
 
-Read `semantic_catalog_design_v2.md` for the ontology and
-`sql_compilation_engine_design.md` for the compiler internals.
+Read [`docs/developer/semantic-catalog-design.md`](docs/developer/semantic-catalog-design.md) for the ontology and
+[`docs/developer/sql-compilation-engine-design.md`](docs/developer/sql-compilation-engine-design.md) for the compiler internals.
 
 ---
 
@@ -76,6 +75,39 @@ semantic-catalog install-example school_gradebook # filtered-metrics tour (the -
 
 Teardown: `semantic-catalog uninstall-example <name>` or
 `semantic-catalog uninstall` to drop every catalog table.
+
+---
+
+## Lite deployment (Teradata-only, no server)
+
+For shops that don't want a Python service running next to their
+database: lite mode exposes the catalog through the open-source
+[Teradata MCP Server Community
+Edition](https://github.com/Teradata/teradata-mcp-server). The catalog
+tables and the search/describe macros all live inside Teradata; the CE
+server hosts a small custom-tools manifest
+(`agentic/lite/semantic_catalog_objects.yml`) that points at them.
+
+```bash
+semantic-catalog install                                       # same DDL as full
+semantic-catalog import path/to/my_model.yaml                  # one-shot, no daemon
+cp agentic/lite/semantic_catalog_objects.yml /path/to/mcp-config-dir/
+# edit the manifest: replace 'demo_user' with your catalog database
+teradata-mcp-server --config_dir /path/to/mcp-config-dir       # CE picks up *_objects.yml
+```
+
+Two tools register: `semantic.search` and `semantic.describe`. An
+agent has enough hints to write SQL by hand (metric expressions,
+relationships, AI context all surface through `describe`), but **does
+not** get compile-time SQL generation, EXPLAIN validation, or
+row-level security — those require the full deployment. OSI export is
+an offline CLI (`semantic-catalog export <model>`), the same Python
+exporter the full deployment exposes via `/api/export/osi`. See
+[`agentic/lite/README.md`](agentic/lite/README.md) for the full
+trade-off matrix.
+
+Both modes share the same database objects; lite is a packaging choice,
+not a fork of the schema.
 
 ---
 
@@ -136,6 +168,8 @@ semantic-catalog install [--fresh]               # deploy every catalog DDL and 
 semantic-catalog uninstall                       # drop every catalog object
 semantic-catalog install-example <name>          # load a bundled scenario
 semantic-catalog uninstall-example <name>        # tear it back down
+semantic-catalog import <file> [--model NAME]    # one-shot YAML/JSON load (no server)
+semantic-catalog export <model> [-o FILE]        # render model as OSI YAML (no server)
 semantic-catalog deploy --include <file>...      # low-level escape hatch
 ```
 
@@ -203,9 +237,9 @@ Auto-generated OpenAPI at [/docs](http://127.0.0.1:8080/docs).
   batch in a single Teradata transaction; any failure rolls back the
   whole load.
 
-See [`sql_compilation_engine_design.md`](./sql_compilation_engine_design.md)
+See [`docs/developer/sql-compilation-engine-design.md`](docs/developer/sql-compilation-engine-design.md)
 for the query-compilation internals and
-[`semantic_catalog_design_v2.md`](./semantic_catalog_design_v2.md) for
+[`docs/developer/semantic-catalog-design.md`](docs/developer/semantic-catalog-design.md) for
 the conceptual ontology.
 
 ---

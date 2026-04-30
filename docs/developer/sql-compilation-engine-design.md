@@ -7,7 +7,7 @@
 
 ## Purpose
 
-The catalog in `semantic_catalog_design_v2.md` defines **what** a semantic
+The catalog in `semantic-catalog-design.md` defines **what** a semantic
 model looks like. This document defines **how** the catalog turns an
 agent's intent into a concrete, validated Teradata SQL query.
 
@@ -481,8 +481,9 @@ persist(v_sql, is_valid, validation_message, anchor_name, joined_list)
 ```
 semantic-layer/
 ├── CLAUDE.md                              — task spec
-├── semantic_catalog_design_v2.md          — conceptual / logical design
-├── sql_compilation_engine_design.md       — this document
+├── docs/developer/
+│   ├── semantic-catalog-design.md         — conceptual / logical design
+│   └── sql-compilation-engine-design.md   — this document
 └── sql/
     ├── 00_drop_all.sql                    — idempotent drop for re-runs
     ├── 01_ddl_enums.sql                   — reference tables

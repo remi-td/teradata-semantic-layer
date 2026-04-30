@@ -13,6 +13,7 @@ import pytest
 from semantic_catalog.importer import (
     import_entity,
     ordered_items,
+    synthesize_filtered_expressions,
 )
 
 
@@ -40,6 +41,13 @@ class FakeCursor:
             self._last_fetch = None
 
     def fetchone(self) -> Any:
+        return self._last_fetch
+
+    def fetchall(self) -> Any:
+        # Tests that drive a multi-row result script a list-of-tuples
+        # explicitly; tests that don't call fetchall stay unaffected.
+        if self._last_fetch is None:
+            return []
         return self._last_fetch
 
     def close(self) -> None:
@@ -267,3 +275,88 @@ def test_unknown_model_rejected_for_dependent_kinds() -> None:
     cur.script(None)              # model lookup → None
     status, msg, _ = import_entity(cur, DB, "ghost", "DATASET", {"name": "x"})
     assert status == "ERROR" and "unknown model" in msg.lower()
+
+
+# --------- synthesize_filtered_expressions --------------------------
+
+def test_synthesize_writes_both_dialects_for_filtered_simple_metric() -> None:
+    cur = FakeCursor()
+    # _resolve_model_id
+    cur.script([42])
+    # SELECT filtered metrics: one row → metric `nii` with base `amount_sum`
+    cur.script([(
+        100,        # m.metric_id
+        "nii",
+        "SIMPLE",
+        7,          # primary_dataset_id
+        9,          # base_metric_id
+        "amount_sum",
+        "SUM",
+        "events.VO_AMOUNT_EUR",
+    )])
+    # SELECT filter rows for metric_id=100
+    cur.script([
+        (1, 50, 3, "value_type", "CO_VALUE_TYPE_P360_LVL1", "=", "'1NII'"),
+        (2, 51, 7, "events",     "FL_SEGMENT",              "=", "'Y'"),
+    ])
+    # Existence check for TERADATA dialect → None (insert path)
+    cur.script(None)
+    # Existence check for ANSI_SQL dialect → None (insert path)
+    cur.script(None)
+
+    n = synthesize_filtered_expressions(cur, DB, "p360")
+    assert n == 1
+
+    # Pull both INSERTs and inspect the SQL strings
+    inserts = [
+        (sql, p) for sql, p in cur.calls
+        if sql.startswith(f"INSERT INTO {DB}.METRIC_EXPRESSION")
+    ]
+    assert len(inserts) == 2
+    dialects = {p[1] for _, p in inserts}
+    assert dialects == {"TERADATA", "ANSI_SQL"}
+    expr = inserts[0][1][2]
+    assert expr.startswith("SUM(CASE WHEN ")
+    assert "value_type.CO_VALUE_TYPE_P360_LVL1 = '1NII'" in expr
+    assert "events.FL_SEGMENT = 'Y'" in expr
+    assert "events.VO_AMOUNT_EUR" in expr
+
+
+def test_synthesize_skips_unknown_model() -> None:
+    cur = FakeCursor()
+    cur.script(None)              # _resolve_model_id → None
+    n = synthesize_filtered_expressions(cur, DB, "ghost")
+    assert n == 0
+
+
+def test_synthesize_updates_existing_dialect_rows() -> None:
+    cur = FakeCursor()
+    cur.script([1])               # _resolve_model_id
+    cur.script([(50, "fees", "SIMPLE", 2, 3, "amount_sum", "SUM", "events.amt")])
+    cur.script([(1, 11, 2, "value_type", "lvl1", "=", "'1NFC'")])
+    # Existence checks return a row → UPDATE path for both dialects
+    cur.script([1])
+    cur.script([1])
+
+    n = synthesize_filtered_expressions(cur, DB, "m")
+    assert n == 1
+    updates = [
+        (sql, p) for sql, p in cur.calls
+        if sql.startswith(f"UPDATE {DB}.METRIC_EXPRESSION")
+    ]
+    assert len(updates) == 2
+    assert {p[2] for _, p in updates} == {"TERADATA", "ANSI_SQL"}
+
+
+def test_synthesize_skips_metric_with_no_filters() -> None:
+    cur = FakeCursor()
+    cur.script([1])               # model_id
+    # One filtered metric returned, but its filter set is empty (orphan
+    # base reference). The runtime compiler would reject; the synth must
+    # not block import.
+    cur.script([(20, "broken", "SIMPLE", 2, 3, "amount_sum", "SUM", "events.amt")])
+    cur.script([])                # no METRIC_FILTER rows
+
+    n = synthesize_filtered_expressions(cur, DB, "m")
+    assert n == 0
+    assert not any("METRIC_EXPRESSION" in sql for sql, _ in cur.calls)

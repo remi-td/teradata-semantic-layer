@@ -136,7 +136,7 @@ def _encode_filter_rhs(f: CompileFilter) -> str:
 _SUM_ELSE_ZERO = {"SUM"}  # SUM treats NULL as 0 anyway, but ELSE 0 is clearer
 
 
-def _compose_filtered_expression(base: MetricRow,
+def compose_filtered_expression(base: MetricRow,
                                  filters: List[MetricFilterRow]) -> str:
     """Build the ``AGG(CASE WHEN ... THEN <arg> ELSE <default> END)`` SQL
     for a filtered rollup. Mirrors sp_semantic_request::F-phase-1.
@@ -338,7 +338,7 @@ class Resolver:
                     f"aggregate_arg contains a ${{...}} reference which is "
                     f"not supported inside an aggregate."
                 )
-            expression = _compose_filtered_expression(base, filters)
+            expression = compose_filtered_expression(base, filters)
             primary_ds_id = row.primary_dataset_id or base.primary_dataset_id
             self._mark_metric_datasets(required, row.metric_id)
             self._mark_metric_datasets(required, base.metric_id)

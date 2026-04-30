@@ -41,9 +41,10 @@ src/semantic_catalog/
   exporter/           — OSI YAML emitter
   mcp/                — embedded MCP tools (/mcp/tools/*)
   static/             — single-page GUI
-  sql_bundle/         — DDL + sp_semantic_search + sp_semantic_describe only
+  sql_bundle/         — DDL + m_semantic_search + m_semantic_describe macros only
 sql/                  — canonical source SQL (mirrors sql_bundle/)
 agentic/              — published agent skill + Claude Code plugin manifest
+  lite/               — Teradata MCP Server CE custom-tools manifest (server-less deployment)
 tests/                — pytest suite (unit + live-smoke)
 ```
 
@@ -53,10 +54,15 @@ tests/                — pytest suite (unit + live-smoke)
 - Everything in the `02_ddl_*` / `04_ddl_*` / `05_ddl_*` range — the
   catalog's table schema. The `SECURITY_POLICY` table is declared here
   but not yet consumed by the compiler (RLS plumbing is a Sprint-3 item).
-- Legacy stored procs (`sp_semantic_request`, `sp_semantic_import`) and
-  their GTTs (`32_request_staging`, `19_gtt_yaml_tmp`) were removed in
-  v0.4. Don't re-introduce them; the compiler and importer are pure
-  Python and that's the product.
+- Legacy stored procs (`sp_semantic_request`, `sp_semantic_import`,
+  `sp_export_osi_yaml`) and their GTTs (`32_request_staging`,
+  `19_gtt_yaml_tmp`) are no longer deployed. The compiler, importer,
+  and OSI exporter are all pure Python — that's the product. The drop
+  statements stay in `00_drop_all.sql` to clean up older installs.
+- Lite (server-less) deployment uses **the same SQL bundle** — no
+  database-side delta. OSI export in lite is an offline CLI
+  (`semantic-catalog export`) that calls the same Python exporter the
+  full server uses for `/api/export/osi`.
 
 ### Frontend choices (don't change without a reason)
 
@@ -117,7 +123,7 @@ DATABASE_URI=... pytest -m live    # includes live/smoke suite
 
 ## Original task briefing (kept for context)
 
-You are building a complete semantic catalog system on Teradata Vantage. The design document is in `semantic_catalog_design_v2.md` — read it fully before starting. It contains the conceptual model, ontology, and logical design.
+You are building a complete semantic catalog system on Teradata Vantage. The design document is in `docs/developer/semantic-catalog-design.md` — read it fully before starting. It contains the conceptual model, ontology, and logical design.
 
 ---
 

@@ -186,3 +186,49 @@ def test_tree_endpoint(client_fake, monkeypatch):
     assert body["datasets"][0]["name"] == "lineitem"
     assert {f["name"] for f in body["datasets"][0]["fields"]} == {"l_orderkey", "l_extendedprice"}
     assert body["metrics"][0]["name"] == "revenue"
+
+
+def test_compile_returns_graceful_error_when_catalog_raises(client_fake, monkeypatch):
+    """Regression: an unexpected exception in the DB catalog layer must
+    not become a bare HTTP 500. The compile endpoint should return 200
+    with ``is_valid=0`` and a structured ``validation_message`` so the
+    GUI / agent can surface the failure reason instead of a naked
+    'Internal Server Error'.
+    """
+    from tests.conftest import FakeCursor, FakePool
+    from semantic_catalog import db
+
+    class ExplodingCursor(FakeCursor):
+        def execute(self, sql: str, params=None):
+            # Let the RLS/model-id lookups succeed, then detonate on the
+            # first METRIC read so we're inside ``py_compile`` when the
+            # exception fires — the exact codepath the 500 came from.
+            s = (sql or "").lower()
+            if "from demo_user.metric" in s:
+                raise RuntimeError("simulated driver blow-up")
+            if "from demo_user.semantic_model" in s:
+                self._result = [(1,)]
+                self._columns = ["model_id"]
+                self.description = [("model_id",)]
+                return
+            return super().execute(sql, params)
+
+    class ExplodingPool(FakePool):
+        def cursor(self):
+            return FakePool._CtxCursor(ExplodingCursor([]))
+
+    monkeypatch.setattr(db, "_pool_singleton", ExplodingPool([]))
+
+    r = client_fake.post("/api/query/compile", json={
+        "model": "tpch_orders",
+        "metrics": ["revenue"],
+        "dimensions": [],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["is_valid"] == 0
+    assert body["compiled_sql"] is None
+    msg = body["validation_message"] or ""
+    # Surface the exception class + message so the caller can act on it.
+    assert "INTERNAL" in msg or "RuntimeError" in msg
+    assert "simulated driver blow-up" in msg

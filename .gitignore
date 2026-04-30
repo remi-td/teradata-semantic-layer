@@ -74,12 +74,8 @@ secrets.json
 
 # Generated test artefacts
 tests/.pytest_cache/
+test-reports/
 TEST_REPORT.local.md
-TEST_RESULTS.md
-TEST_STRATEGY.md
-WORKFLOW_REVIEW.md
-GUI_TEST_REPORT.md
-GUI-requirements.md
 
 # Uvicorn / server logs
 *.log

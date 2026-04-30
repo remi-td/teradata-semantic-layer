@@ -111,6 +111,147 @@ An entry in a semantic view that exposes a specific field or metric. View member
 
 ## Part 3: Logical model
 
+### Entity diagram
+
+```mermaid
+erDiagram
+    SEMANTIC_MODEL ||--o{ DATASET           : contains
+    SEMANTIC_MODEL ||--o{ METRIC            : contains
+    SEMANTIC_MODEL ||--o{ SEMANTIC_VIEW     : contains
+
+    DATASET        ||--o{ FIELD             : has
+    DATASET        ||--o{ DATASET_KEY       : "PK/UK"
+    DATASET        ||--o{ RELATIONSHIP      : "from (many-side)"
+    DATASET        ||--o{ RELATIONSHIP      : "to (one-side)"
+    DATASET        |o--o{ METRIC            : "primary_dataset (optional)"
+    DATASET        |o--o{ SEMANTIC_VIEW     : "primary_dataset"
+
+    FIELD          ||--o{ DATASET_KEY       : "key column"
+    FIELD          ||--o{ REL_COLUMN_MAP    : "from_field"
+    FIELD          ||--o{ REL_COLUMN_MAP    : "to_field"
+    FIELD          ||--o{ METRIC_FIELD_REF  : "consumed by"
+    FIELD          ||--o{ VIEW_MEMBER       : "exposed as"
+
+    RELATIONSHIP   ||--|{ REL_COLUMN_MAP    : "join columns"
+
+    METRIC         ||--|{ METRIC_EXPRESSION : dialects
+    METRIC         ||--o{ METRIC_FIELD_REF  : "depends on"
+    METRIC         ||--o{ VIEW_MEMBER       : "exposed as"
+
+    SEMANTIC_VIEW  ||--o{ VIEW_MEMBER       : exposes
+
+    SEMANTIC_MODEL {
+        int    model_id     PK
+        string model_name   "NK, unique"
+        string description
+        byteint is_active
+    }
+    DATASET {
+        int    dataset_id   PK
+        int    model_id     FK
+        string dataset_name "NK"
+        string DataBaseName "FK to dbc.TablesV"
+        string TableName    "FK to dbc.TablesV"
+        clob   source_query "or query-defined"
+    }
+    FIELD {
+        int    field_id        PK
+        int    dataset_id      FK
+        string field_name      "NK"
+        char   field_type_code "A=attribute, K=key"
+        string expression      "scalar SQL"
+        string ColumnName      "FK to dbc.ColumnsV (nullable)"
+        byteint is_dimension
+        byteint is_time_dimension
+    }
+    DATASET_KEY {
+        int      dataset_id      PK
+        string   key_type        PK "PK or UK"
+        smallint key_ordinal     PK
+        smallint column_position PK
+        int      field_id        FK
+    }
+    RELATIONSHIP {
+        int    relationship_id  PK
+        int    from_dataset_id  FK
+        int    to_dataset_id    FK
+        string cardinality      "MANY_TO_ONE / ONE_TO_ONE / etc."
+        string join_type_hint
+        byteint is_scd2
+    }
+    REL_COLUMN_MAP {
+        int      relationship_id PK
+        smallint column_position PK
+        int      from_field_id   FK
+        int      to_field_id     FK
+    }
+    METRIC {
+        int    metric_id          PK
+        int    model_id           FK
+        string metric_name        "NK"
+        int    primary_dataset_id "FK, nullable"
+        string metric_type        "SIMPLE / RATIO / CUMULATIVE / DERIVED"
+        byteint is_additive
+    }
+    METRIC_EXPRESSION {
+        int    metric_id  PK
+        string dialect    PK "TERADATA or ANSI_SQL"
+        string expression "aggregate SQL"
+    }
+    METRIC_FIELD_REF {
+        int    metric_id PK
+        int    field_id  PK
+        string dep_role  "MEASURE / FILTER / GROUP_BY"
+    }
+    SEMANTIC_VIEW {
+        int    view_id            PK
+        int    model_id           FK
+        string view_name          "NK"
+        int    primary_dataset_id FK
+        byteint is_certified
+        byteint is_public
+    }
+    VIEW_MEMBER {
+        int      view_id           PK
+        smallint member_ordinal    PK
+        string   member_name
+        string   member_type       "DIMENSION / MEASURE / TIME_DIMENSION"
+        int      field_id          "FK, nullable"
+        int      metric_id         "FK, nullable"
+        string   inline_expression "fallback"
+    }
+    AI_CONTEXT {
+        string entity_type PK "polymorphic"
+        int    entity_id   PK
+        string instructions
+        json   synonyms
+        json   examples
+    }
+    FORMAT_SPEC {
+        string entity_type   PK "polymorphic"
+        int    entity_id     PK
+        string format_type   "CURRENCY / NUMBER / DATE / ..."
+        string currency_code
+        smallint decimal_places
+    }
+    SECURITY_POLICY {
+        string   entity_type     PK "polymorphic"
+        int      entity_id       PK
+        smallint policy_ordinal  PK
+        string   policy_type     "ROW_FILTER / MEMBER_INCLUDE / MEMBER_EXCLUDE"
+        string   group_name
+        string   policy_expression
+    }
+    CUSTOM_EXTENSION {
+        string entity_type   PK "polymorphic"
+        int    entity_id     PK
+        string vendor_name   PK "TERADATA or COMMON"
+        json   extension_data
+    }
+```
+
+The four polymorphic decorator tables (`AI_CONTEXT`, `FORMAT_SPEC`, `SECURITY_POLICY`, `CUSTOM_EXTENSION`) attach to multiple parents via `(entity_type, entity_id)` rather than typed FKs, so they appear unlinked in the diagram. Their valid `entity_type` values are listed in the entity-detail section below.
+
 ### Entity list
 
 | Entity | Primary key | Natural key | Parent(s) |

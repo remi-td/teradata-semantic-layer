@@ -54,6 +54,20 @@ def _db_name() -> str:
     return load_settings().catalog_db
 
 
+def _short_err(e: BaseException, *, limit: int = 240) -> str:
+    """Render an exception as a single line suitable for validation_message.
+
+    Keeps the class name (so 'KeyError' vs 'ProgrammingError' is visible to
+    the caller) and truncates long driver messages so the UI banner stays
+    readable. The full traceback is already logged server-side.
+    """
+    msg = str(e).strip() or e.__class__.__name__
+    msg = " ".join(msg.split())  # collapse newlines/tabs from driver text
+    if len(msg) > limit:
+        msg = msg[: limit - 1] + "…"
+    return f"{e.__class__.__name__}: {msg}"
+
+
 def _parse_groups(header: Optional[str]) -> List[str]:
     """Parse the X-Semantic-Groups header into a list of group names.
 
@@ -127,8 +141,27 @@ def _compile_and_maybe_execute(req: QueryRequest, *, execute: bool,
                 validation_message=f"{e.code}: {e.message}",
                 anchor_dataset=None, joined_datasets=None, execution=None,
             )
+        except Exception as e:  # noqa: BLE001
+            # Catalog-layer failure (bad DB state, driver error, unexpected
+            # shape). Never leak as a 500 — the caller is an agent or the
+            # GUI and can only act on a structured message.
+            log.exception("compile failed unexpectedly")
+            return QueryResponse(
+                compiled_sql=None, is_valid=0,
+                validation_message=f"INTERNAL: {_short_err(e)}",
+                anchor_dataset=None, joined_datasets=None, execution=None,
+            )
 
-        compile_sql = render(plan)
+        try:
+            compile_sql = render(plan)
+        except Exception as e:  # noqa: BLE001
+            log.exception("render failed for plan on model=%s", compile_req.model)
+            return QueryResponse(
+                compiled_sql=None, is_valid=0,
+                validation_message=f"RENDER_ERROR: {_short_err(e)}",
+                anchor_dataset=plan.anchor.dataset_name if plan.anchor else None,
+                joined_datasets=None, execution=None,
+            )
         anchor = plan.anchor.dataset_name if plan.anchor else None
         joined = ", ".join(plan.joined_datasets) if plan.joined_datasets else None
         validation_msg = plan.chasm_warning or None

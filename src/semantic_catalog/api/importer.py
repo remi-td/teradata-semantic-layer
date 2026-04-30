@@ -15,7 +15,11 @@ import yaml
 from fastapi import APIRouter, HTTPException
 
 from ..db import get_pool
-from ..importer import import_entity as py_import_entity, ordered_items
+from ..importer import (
+    import_entity as py_import_entity,
+    ordered_items,
+    synthesize_filtered_expressions as py_synthesize_filtered_expressions,
+)
 from .models import (
     ImportItem,
     ImportRequest,
@@ -111,6 +115,7 @@ def _run_python(req: ImportRequest, db: str,
 
             applied = False
             if err_count == 0 and not req.dry_run:
+                py_synthesize_filtered_expressions(cur, db, req.model)
                 conn.commit()
                 applied = True
             else:

@@ -20,11 +20,12 @@ Where status is "OK" | "ERROR" | "SKIP".
 from __future__ import annotations
 
 from .parser import ordered_items
-from .writer import import_entity, KINDS, ImportError_
+from .writer import import_entity, KINDS, ImportError_, synthesize_filtered_expressions
 
 __all__ = [
     "ordered_items",
     "import_entity",
+    "synthesize_filtered_expressions",
     "KINDS",
     "ImportError_",
 ]

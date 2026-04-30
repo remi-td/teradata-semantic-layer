@@ -37,7 +37,7 @@ If you need any of the above as live tools, run the full deployment:
 
 ```bash
 # 1. Deploy the catalog tables and macros into Teradata.
-pip install semantic-catalog                    # one-shot tool, only needed for install
+pip install git+https://github.com/remi-td/teradata-semantic-layer.git   # one-shot tool, only needed for install
 export DATABASE_URI="teradata://user:pw@host:1025/<your_db>"
 semantic-catalog install                        # idempotent
 

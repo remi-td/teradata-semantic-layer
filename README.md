@@ -44,7 +44,7 @@ Read [`docs/developer/semantic-catalog-design.md`](docs/developer/semantic-catal
 
 ```bash
 # 1. Install + point at a Teradata
-pip install semantic-catalog
+pip install git+https://github.com/remi-td/teradata-semantic-layer.git
 export DATABASE_URI="teradata://user:password@host:1025/demo_user"
 
 # 2. Deploy the catalog + a pre-seeded demo model in one shot
@@ -61,7 +61,7 @@ has four tabs: **Graph**, **Query builder**, **Import**, and **Export**.
 
 Need to verify DB reachability first? `semantic-catalog ping`.
 
-> Prefer source? Replace step 1 with `git clone … && cd semantic-catalog && pip install .`.
+> Prefer a local clone? `git clone https://github.com/remi-td/teradata-semantic-layer.git && cd teradata-semantic-layer && pip install .`. The package is not on PyPI yet — install from git in either case.
 
 ### Other example scenarios
 

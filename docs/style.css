@@ -77,10 +77,8 @@ h4 { font-weight: 600; }
 }
 .top-wrap { display: flex; align-items: center; justify-content: space-between; height: 64px; gap: 24px; }
 
-.brand { display: inline-flex; align-items: center; gap: 10px; color: var(--navy); font-weight: 500; text-decoration: none; }
+.brand { display: inline-flex; align-items: center; color: var(--navy); font-weight: 500; text-decoration: none; }
 .brand:hover { text-decoration: none; }
-.brand-logo { height: 22px; width: auto; display: block; }
-.brand-sep { color: var(--line); font-weight: 300; }
 .brand-product { font-weight: 500; color: var(--navy); }
 
 .top-nav { display: flex; align-items: center; gap: 22px; }

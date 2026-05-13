@@ -1,4 +1,4 @@
-# Teradata Semantic Catalog
+# A Semantic Layer for Teradata
 
 A **Teradata-native semantic layer** that lets AI agents and BI tools
 ask business questions against a governed metric + dimension model —
@@ -329,13 +329,14 @@ pytest -m ""                # run everything, including `live` marker
 
 ---
 
-## Branding
+## Community
 
-UI follows the Teradata visual identity:
+This is an independent community project, not an official Teradata product.
+It is not supported, endorsed, or maintained by Teradata Corporation.
+"Teradata" is used solely to describe what the tool connects to.
 
-- Primary Orange `#FF5F02`, Navy `#00233C`, white space as structure.
-- Inter typeface (loaded from Google Fonts); JetBrains Mono for code.
-- Logo is the officially provided PNG — never recreated.
+Contributions are welcome — bug reports, feature requests, and pull requests
+all help. Open an issue or submit a PR on GitHub.
 
 ---
 

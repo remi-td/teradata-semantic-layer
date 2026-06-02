@@ -17,14 +17,17 @@ COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.description AS 'Human-readable descri
 COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.owner_user AS 'Primary owner (Teradata user name).';
 COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.owner_group AS 'Owning team or role.';
 COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.is_active AS '1 = active and discoverable, 0 = archived.';
+COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.model_family AS 'Optional family name grouping multiple versions of the same logical model (e.g. supplier_risk).';
+COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.model_version AS 'Integer version within the family. 1-based; later versions have higher numbers.';
+COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.is_latest AS '1 = this is the current production version of the family. Only one row per family should have is_latest=1.';
+COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.is_deprecated AS '1 = model is deprecated and should not be used for new queries. Deprecated models are excluded from /api/models listing.';
 COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.created_ts AS 'Creation audit timestamp.';
 COMMENT ON COLUMN demo_user.SEMANTIC_MODEL.updated_ts AS 'Last-update audit timestamp.';
 
 -- DATASET
-COMMENT ON TABLE demo_user.DATASET AS 'Logical business entity backed by a physical table/view or SQL query. Also represents a cube.';
+COMMENT ON TABLE demo_user.DATASET AS 'Logical business entity backed by a physical table/view or SQL query. Also represents a cube. Globally named; associated with models via MODEL_DATASET.';
 COMMENT ON COLUMN demo_user.DATASET.dataset_id AS 'Surrogate primary key.';
-COMMENT ON COLUMN demo_user.DATASET.model_id AS 'FK to SEMANTIC_MODEL — the model this dataset belongs to.';
-COMMENT ON COLUMN demo_user.DATASET.dataset_name AS 'Business name of the dataset, unique within its model.';
+COMMENT ON COLUMN demo_user.DATASET.dataset_name AS 'Business name of the dataset, globally unique across all models.';
 COMMENT ON COLUMN demo_user.DATASET.description AS 'Human-readable description.';
 COMMENT ON COLUMN demo_user.DATASET.granularity_desc AS 'What a single row represents (grain), e.g. one customer per row.';
 COMMENT ON COLUMN demo_user.DATASET.DataBaseName AS 'Optional reference to dbc.TablesV.DataBaseName (physical mapping).';
@@ -127,34 +130,15 @@ COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.level_ord AS '1 = top (most ag
 COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.field_id AS 'FK to FIELD participating at this level.';
 COMMENT ON COLUMN demo_user.FIELD_HIERARCHY_LEVEL.level_name AS 'Business label for this level (e.g. "Country", "Region").';
 
--- SEMANTIC_VIEW
-COMMENT ON TABLE demo_user.SEMANTIC_VIEW AS 'Curated projection over a model — exposes a chosen subset of dimensions and metrics.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.view_id AS 'Surrogate primary key.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.model_id AS 'FK to SEMANTIC_MODEL.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.view_name AS 'Business name of the view (unique within model).';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.description AS 'Human-readable description.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.primary_dataset_id AS 'Anchor dataset (typically the fact or cube).';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.timeseries_field AS 'Default time dimension field name for BI consumers.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.is_certified AS '1 = production-certified.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.is_public AS '1 = visible to consumers.';
-COMMENT ON COLUMN demo_user.SEMANTIC_VIEW.owner_user AS 'Primary owner (Teradata user).';
-
--- VIEW_MEMBER
-COMMENT ON TABLE demo_user.VIEW_MEMBER AS 'Exposed member (dimension or measure) of a SEMANTIC_VIEW.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.view_id AS 'FK to SEMANTIC_VIEW.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.member_ordinal AS 'Position within the view.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.member_name AS 'Exposed name (may alias the underlying field/metric).';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.member_type AS 'DIMENSION | MEASURE | TIME_DIMENSION.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.field_id AS 'Optional FK to FIELD (for dimensions).';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.metric_id AS 'Optional FK to METRIC (for measures).';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.inline_expression AS 'Raw SQL expression when the underlying field/metric is not yet decomposed.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.display_name AS 'Override display label.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.is_public AS '1 = visible, 0 = hidden.';
-COMMENT ON COLUMN demo_user.VIEW_MEMBER.member_order AS 'Display order.';
+-- MODEL_DATASET
+COMMENT ON TABLE demo_user.MODEL_DATASET AS 'n:n junction linking SEMANTIC_MODEL to DATASET. Enables dataset sharing across model versions.';
+COMMENT ON COLUMN demo_user.MODEL_DATASET.model_id AS 'FK to SEMANTIC_MODEL.';
+COMMENT ON COLUMN demo_user.MODEL_DATASET.dataset_id AS 'FK to DATASET.';
+COMMENT ON COLUMN demo_user.MODEL_DATASET.is_primary AS '1 = this dataset is the primary/anchor dataset for the model (optional hint).';
 
 -- AI_CONTEXT
 COMMENT ON TABLE demo_user.AI_CONTEXT AS 'Polymorphic agent-facing metadata: instructions, synonyms, examples, display_name.';
-COMMENT ON COLUMN demo_user.AI_CONTEXT.entity_type AS 'MODEL | DATASET | FIELD | METRIC | VIEW | VIEW_MEMBER.';
+COMMENT ON COLUMN demo_user.AI_CONTEXT.entity_type AS 'MODEL | DATASET | FIELD | METRIC.';
 COMMENT ON COLUMN demo_user.AI_CONTEXT.entity_id AS 'Surrogate ID of the referenced entity.';
 COMMENT ON COLUMN demo_user.AI_CONTEXT.instructions AS 'Free-form agent guidance about how/when to use this entity.';
 COMMENT ON COLUMN demo_user.AI_CONTEXT.synonyms AS 'JSON array of alternative names (e.g. ["total sales","revenue"]).';

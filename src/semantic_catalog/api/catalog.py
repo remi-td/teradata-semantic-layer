@@ -34,11 +34,11 @@ def list_models():
     db = _db_name()
     sql = f"""
         SELECT m.model_id, m.model_name, m.description,
-               (SELECT COUNT(*) FROM {db}.DATASET d WHERE d.model_id=m.model_id) AS ds_count,
+               (SELECT COUNT(*) FROM {db}.MODEL_DATASET md WHERE md.model_id=m.model_id) AS ds_count,
                (SELECT COUNT(*) FROM {db}.METRIC mt WHERE mt.model_id=m.model_id) AS mt_count,
-               (SELECT COUNT(*) FROM {db}.SEMANTIC_VIEW v WHERE v.model_id=m.model_id) AS vw_count
+               m.model_family, m.model_version, m.is_latest
           FROM {db}.SEMANTIC_MODEL m
-         WHERE m.is_active = 1
+         WHERE m.is_active = 1 AND m.is_deprecated = 0
          ORDER BY m.model_name
     """
     with get_pool().cursor() as cur:
@@ -51,7 +51,9 @@ def list_models():
                 description=(r[2] or None),
                 dataset_count=int(r[3] or 0),
                 metric_count=int(r[4] or 0),
-                view_count=int(r[5] or 0),
+                model_family=(str(r[5]).strip() if r[5] else None),
+                model_version=int(r[6] or 1),
+                is_latest=bool(r[7] if r[7] is not None else 1),
             ))
         return out
 
@@ -79,8 +81,9 @@ def get_graph(model_name: str):
                    (SELECT COUNT(*) FROM {db}.FIELD f WHERE f.dataset_id = d.dataset_id) AS field_count,
                    ac.display_name
               FROM {db}.DATASET d
+              JOIN {db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
               LEFT JOIN {db}.AI_CONTEXT ac ON ac.entity_type='DATASET' AND ac.entity_id=d.dataset_id
-             WHERE d.model_id = ?
+             WHERE md.model_id = ?
              ORDER BY d.dataset_name
         """, (model_id,))
         dataset_ids: Dict[int, str] = {}
@@ -144,8 +147,8 @@ def get_graph(model_name: str):
                    r.from_dataset_id, r.to_dataset_id,
                    r.cardinality, r.join_type_hint, r.role_name
               FROM {db}.RELATIONSHIP r
-              JOIN {db}.DATASET df ON df.dataset_id = r.from_dataset_id
-             WHERE df.model_id = ?
+              JOIN {db}.MODEL_DATASET md ON md.dataset_id = r.from_dataset_id
+             WHERE md.model_id = ?
         """, (model_id,))
         for r in cur.fetchall():
             rid = int(r[0])
@@ -162,33 +165,6 @@ def get_graph(model_name: str):
                 cardinality=str(r[4]).strip() if r[4] else None,
                 role_name=(str(r[6]).strip() if r[6] else None),
             ))
-
-        # Semantic views — attach to primary dataset.
-        cur.execute(f"""
-            SELECT v.view_id, v.view_name, v.description, v.primary_dataset_id,
-                   v.is_certified, v.is_public
-              FROM {db}.SEMANTIC_VIEW v
-             WHERE v.model_id = ?
-             ORDER BY v.view_name
-        """, (model_id,))
-        for r in cur.fetchall():
-            vid = int(r[0])
-            vname = str(r[1]).strip()
-            pds   = int(r[3]) if r[3] is not None else None
-            nodes.append(GraphNode(
-                id=f"vw:{vid}",
-                label=vname,
-                kind="VIEW",
-                description=(r[2] or None),
-                meta={"is_certified": bool(r[4] or 0), "is_public": bool(r[5] or 0)},
-            ))
-            if pds is not None and pds in dataset_ids:
-                edges.append(GraphEdge(
-                    id=f"e-vw:{vid}-ds:{pds}",
-                    source=f"vw:{vid}",
-                    target=f"ds:{pds}",
-                    kind="VIEW_OF",
-                ))
 
     return GraphPayload(model_name=model_name, nodes=nodes, edges=edges)
 
@@ -265,7 +241,6 @@ def get_tree(model_name: str) -> Dict[str, Any]:
           "model": {"name": ..., "description": ...},
           "datasets": [{"name", "sub_kind", "fields":[{name, is_dim, is_time_dim, type}]}],
           "metrics":  [{"name", "type"}],
-          "views":    [{"name"}],
           "relationships": [{"name", "from", "to", "cardinality"}]
         }
     """
@@ -283,7 +258,9 @@ def get_tree(model_name: str) -> Dict[str, Any]:
             SELECT d.dataset_id, d.dataset_name,
                    CASE WHEN d.source_query IS NOT NULL THEN 'CUBE' ELSE 'TABLE' END,
                    d.description
-              FROM {db}.DATASET d WHERE d.model_id = ? ORDER BY d.dataset_name
+              FROM {db}.DATASET d
+              JOIN {db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+             WHERE md.model_id = ? ORDER BY d.dataset_name
         """, (model_id,))
         datasets: List[Dict[str, Any]] = []
         ds_map: Dict[int, Dict[str, Any]] = {}
@@ -335,28 +312,14 @@ def get_tree(model_name: str) -> Dict[str, Any]:
         ]
 
         cur.execute(f"""
-            SELECT v.view_name, v.description, d.dataset_name, v.is_certified
-              FROM {db}.SEMANTIC_VIEW v
-              LEFT JOIN {db}.DATASET d ON d.dataset_id = v.primary_dataset_id
-             WHERE v.model_id = ? ORDER BY v.view_name
-        """, (model_id,))
-        out["views"] = [
-            {
-                "name": str(r[0]).strip(),
-                "description": (r[1] or None),
-                "primary_dataset": (str(r[2]).strip() if r[2] else None),
-                "is_certified": bool(r[3] or 0),
-            } for r in cur.fetchall()
-        ]
-
-        cur.execute(f"""
             SELECT r.relationship_id, r.relationship_name,
                    df.dataset_name, dt.dataset_name,
                    r.cardinality, r.join_type_hint, r.role_name
               FROM {db}.RELATIONSHIP r
               JOIN {db}.DATASET df ON df.dataset_id = r.from_dataset_id
               JOIN {db}.DATASET dt ON dt.dataset_id = r.to_dataset_id
-             WHERE df.model_id = ?
+              JOIN {db}.MODEL_DATASET md ON md.dataset_id = r.from_dataset_id
+             WHERE md.model_id = ?
              ORDER BY r.relationship_name
         """, (model_id,))
         rel_rows = cur.fetchall()

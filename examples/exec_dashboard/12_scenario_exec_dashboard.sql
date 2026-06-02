@@ -23,11 +23,10 @@ VALUES (
 -- with soft-delete exclusions, CASE-derived buckets, and a date filter.
 ------------------------------------------------------------------------------
 INSERT INTO demo_user.DATASET (
-    model_id, dataset_name, description, granularity_desc,
+    dataset_name, description, granularity_desc,
     DataBaseName, TableName, source_query
 )
 SELECT
-    m.model_id,
     'sales_cube',
     'Pre-canned executive sales cube. Flat result-set with order-level grain, enriched with customer, region, and product dimensions and revenue / units measures. Inline source_query is the single source of truth for this model.',
     'One row per (order_id, product_id).',
@@ -79,13 +78,19 @@ WHERE o.order_status IN (''SHIPPED'',''DELIVERED'')
 FROM demo_user.SEMANTIC_MODEL m
 WHERE m.model_name='exec_dashboard';
 
+-- Link sales_cube to the exec_dashboard model
+INSERT INTO demo_user.MODEL_DATASET (model_id, dataset_id, is_primary)
+SELECT m.model_id, d.dataset_id, 1
+FROM demo_user.SEMANTIC_MODEL m, demo_user.DATASET d
+WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
+
 ------------------------------------------------------------------------------
 -- 3. Fields — dimensions and raw measures on the cube
 ------------------------------------------------------------------------------
 
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('order_id' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('order_id' AS VARCHAR(10000)) AS expr, CAST('Order identifier (component of composite grain key).' AS VARCHAR(10000)) AS descr, CAST('Order' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('order_id' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'product_id','K','product_id','Product identifier (component of composite grain key).','Product',0,0,'INTEGER','product_id',2 FROM (SELECT 1 x) a
@@ -109,13 +114,13 @@ WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
 -- Composite grain key
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 1, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='order_id'
 WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
 
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 2, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='product_id'
 WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
 
@@ -127,7 +132,7 @@ WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team, default_time_grain)
 SELECT m.model_id, 'total_net_revenue','Net revenue (post-discount) across all selected slices.',
        d.dataset_id,'SIMPLE',1,1,'exec-analytics','WEEK'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 WHERE m.model_name='exec_dashboard';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -143,14 +148,14 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='total_net_revenue';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='net_revenue'
 WHERE m.model_name='exec_dashboard' AND mt.metric_name='total_net_revenue';
 
 -- total_units
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'total_units','Total units sold.',d.dataset_id,'SIMPLE',1,1,'exec-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 WHERE m.model_name='exec_dashboard';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -166,14 +171,14 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='total_units';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='units_sold'
 WHERE m.model_name='exec_dashboard' AND mt.metric_name='total_units';
 
 -- unique_orders (non-additive)
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'unique_orders','Distinct count of orders in the slice.',d.dataset_id,'SIMPLE',0,1,'exec-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 WHERE m.model_name='exec_dashboard';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -189,14 +194,14 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='unique_orders';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='order_id'
 WHERE m.model_name='exec_dashboard' AND mt.metric_name='unique_orders';
 
 -- return_rate (RATIO)
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'return_rate','Share of lines that were returned (RATIO).',d.dataset_id,'RATIO',0,1,'exec-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 WHERE m.model_name='exec_dashboard';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -212,7 +217,7 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='return_rate';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='is_returned'
 WHERE m.model_name='exec_dashboard' AND mt.metric_name='return_rate';
 
@@ -220,7 +225,7 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='return_rate';
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'new_customer_revenue','Net revenue from customers acquired in the last 12 months.',
        d.dataset_id,'SIMPLE',1,0,'exec-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 WHERE m.model_name='exec_dashboard';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -238,84 +243,10 @@ WHERE m.model_name='exec_dashboard' AND mt.metric_name='new_customer_revenue';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, CASE WHEN f.field_name='is_new_customer' THEN 'FILTER' ELSE 'MEASURE' END
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='sales_cube'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name IN ('is_new_customer','net_revenue')
 WHERE m.model_name='exec_dashboard' AND mt.metric_name='new_customer_revenue';
 
-------------------------------------------------------------------------------
--- 5. Semantic view
-------------------------------------------------------------------------------
-INSERT INTO demo_user.SEMANTIC_VIEW (model_id, view_name, description, primary_dataset_id, timeseries_field, is_certified, is_public, owner_user)
-SELECT m.model_id, 'exec_weekly',
-       'Weekly executive scorecard — revenue, units, return rate, new-customer revenue.',
-       d.dataset_id, 'order_week', 1, 1, 'DEMO_USER'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-WHERE m.model_name='exec_dashboard';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 1, 'order_week', 'TIME_DIMENSION', f.field_id, 'Week', 1, 1
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='order_week'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 2, 'region', 'DIMENSION', f.field_id, 'Region', 1, 2
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='region'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 3, 'customer_segment', 'DIMENSION', f.field_id, 'Segment', 1, 3
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='customer_segment'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 4, 'product_category', 'DIMENSION', f.field_id, 'Category', 1, 4
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='product_category'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 5, 'sales_channel', 'DIMENSION', f.field_id, 'Channel', 1, 5
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='sales_cube'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='sales_channel'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 10, 'total_net_revenue', 'MEASURE', mt.metric_id, 'Net Revenue', 1, 10
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='total_net_revenue'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 11, 'total_units', 'MEASURE', mt.metric_id, 'Units', 1, 11
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='total_units'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 12, 'unique_orders', 'MEASURE', mt.metric_id, 'Orders', 1, 12
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='unique_orders'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 13, 'return_rate', 'MEASURE', mt.metric_id, 'Return Rate', 1, 13
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='return_rate'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 14, 'new_customer_revenue', 'MEASURE', mt.metric_id, 'New-Customer Revenue', 1, 14
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='new_customer_revenue'
-WHERE m.model_name='exec_dashboard' AND v.view_name='exec_weekly';
 
 ------------------------------------------------------------------------------
 -- 6. AI context and format specs (heavy business guidance — cubes rely on
@@ -334,7 +265,7 @@ SELECT 'DATASET', d.dataset_id,
        'Flat fact cube. One row per (order_id, product_id). Already excludes cancelled, deleted, and non-shipped orders. Has a 36-month rolling window built in.',
        NEW JSON('["sales cube","weekly cube","exec cube"]'),
        'Sales Cube'
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 WHERE m.model_name='exec_dashboard' AND d.dataset_name='sales_cube';
 
 INSERT INTO demo_user.AI_CONTEXT (entity_type, entity_id, instructions, synonyms, display_name)

@@ -68,8 +68,9 @@ def _resolve_model_id(cur, db: str, model_name: str) -> Optional[int]:
 
 def _resolve_dataset_id(cur, db: str, model_id: int, dataset_name: str) -> Optional[int]:
     r = _fetchone(cur,
-                  f"SELECT dataset_id FROM {db}.DATASET "
-                  f"WHERE model_id = ? AND dataset_name = ?",
+                  f"SELECT d.dataset_id FROM {db}.DATASET d"
+                  f" JOIN {db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id"
+                  f" WHERE md.model_id = ? AND d.dataset_name = ?",
                   model_id, dataset_name)
     return int(r[0]) if r else None
 
@@ -110,8 +111,8 @@ def _resolve_relationship_id(cur, db: str, model_id: int, rel_name: str) -> Opti
     r = _fetchone(cur,
                   f"""SELECT r.relationship_id
                         FROM {db}.RELATIONSHIP r
-                        JOIN {db}.DATASET df ON df.dataset_id = r.from_dataset_id
-                       WHERE df.model_id = ? AND r.relationship_name = ?""",
+                        JOIN {db}.MODEL_DATASET md ON md.dataset_id = r.from_dataset_id
+                       WHERE md.model_id = ? AND r.relationship_name = ?""",
                   model_id, rel_name)
     return int(r[0]) if r else None
 
@@ -148,20 +149,36 @@ def _write_model(cur, db: str, p: Dict[str, Any]) -> Tuple[Status, Message, Enti
             (p.get("description"), p.get("owner_user"), p.get("owner_group"), existing),
         )
         return "OK", f"updated model {name}", existing
+    model_family = p.get("model_family")
+    model_version = int(p.get("model_version") or 1)
+    is_latest = int(p.get("is_latest") if p.get("is_latest") is not None else 1)
+    is_deprecated = int(p.get("is_deprecated") or 0)
     cur.execute(
         f"INSERT INTO {db}.SEMANTIC_MODEL "
-        f"(model_name, description, owner_user, owner_group) VALUES (?, ?, ?, ?)",
-        (name, p.get("description"), p.get("owner_user"), p.get("owner_group")),
+        f"(model_name, description, owner_user, owner_group,"
+        f" model_family, model_version, is_latest, is_deprecated)"
+        f" VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (name, p.get("description"), p.get("owner_user"), p.get("owner_group"),
+         model_family, model_version, is_latest, is_deprecated),
     )
     new_id = _resolve_model_id(cur, db, name)
     return "OK", f"inserted model {name}", new_id
+
+
+def _resolve_dataset_id_global(cur, db: str, dataset_name: str) -> Optional[int]:
+    """Look up dataset by name globally (without model scoping)."""
+    r = _fetchone(cur,
+                  f"SELECT dataset_id FROM {db}.DATASET WHERE dataset_name = ?",
+                  dataset_name)
+    return int(r[0]) if r else None
 
 
 def _write_dataset(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[Status, Message, EntityId]:
     _require(p, "name")
     name = p["name"]
     dbn, tbl = _split_source_table(p.get("source_table") or "")
-    existing = _resolve_dataset_id(cur, db, model_id, name)
+    # Check for existing dataset globally by name
+    existing = _resolve_dataset_id_global(cur, db, name)
     if existing is not None:
         cur.execute(
             f"UPDATE {db}.DATASET "
@@ -171,17 +188,32 @@ def _write_dataset(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[Stat
             (p.get("description"), p.get("granularity"), dbn, tbl,
              p.get("source_query"), existing),
         )
-        return "OK", f"updated dataset {name}", existing
-    cur.execute(
-        f"INSERT INTO {db}.DATASET "
-        f"(model_id, dataset_name, description, granularity_desc, "
-        f" DataBaseName, TableName, source_query) "
-        f"VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (model_id, name, p.get("description"), p.get("granularity"),
-         dbn, tbl, p.get("source_query")),
-    )
-    new_id = _resolve_dataset_id(cur, db, model_id, name)
-    return "OK", f"inserted dataset {name}", new_id
+        dataset_id = existing
+    else:
+        cur.execute(
+            f"INSERT INTO {db}.DATASET "
+            f"(dataset_name, description, granularity_desc, "
+            f" DataBaseName, TableName, source_query) "
+            f"VALUES (?, ?, ?, ?, ?, ?)",
+            (name, p.get("description"), p.get("granularity"),
+             dbn, tbl, p.get("source_query")),
+        )
+        dataset_id = _resolve_dataset_id_global(cur, db, name)
+    # Upsert MODEL_DATASET link
+    if dataset_id is not None:
+        link = _fetchone(cur,
+                         f"SELECT 1 FROM {db}.MODEL_DATASET"
+                         f" WHERE model_id = ? AND dataset_id = ?",
+                         model_id, dataset_id)
+        if not link:
+            cur.execute(
+                f"INSERT INTO {db}.MODEL_DATASET (model_id, dataset_id, is_primary)"
+                f" VALUES (?, ?, 0)",
+                (model_id, dataset_id),
+            )
+    if existing is not None:
+        return "OK", f"updated dataset {name}", dataset_id
+    return "OK", f"inserted dataset {name}", dataset_id
 
 
 def _write_field(cur, db: str, model_id: int, p: Dict[str, Any]) -> Tuple[Status, Message, EntityId]:

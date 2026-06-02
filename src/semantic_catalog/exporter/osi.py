@@ -131,11 +131,13 @@ def _load_format_spec(cur, db: str, entity_type: str,
 
 def _build_datasets(cur, db: str, model_id: int) -> List[Dict[str, Any]]:
     rows = _fetchall(cur,
-                     f"""SELECT dataset_id, dataset_name, description,
-                                granularity_desc, DataBaseName, TableName,
-                                CAST(source_query AS VARCHAR(8000))
-                           FROM {db}.DATASET WHERE model_id = ?
-                          ORDER BY dataset_name""",
+                     f"""SELECT d.dataset_id, d.dataset_name, d.description,
+                                d.granularity_desc, d.DataBaseName, d.TableName,
+                                CAST(d.source_query AS VARCHAR(8000))
+                           FROM {db}.DATASET d
+                           JOIN {db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+                          WHERE md.model_id = ?
+                          ORDER BY d.dataset_name""",
                      model_id)
     out: List[Dict[str, Any]] = []
     for row in rows:

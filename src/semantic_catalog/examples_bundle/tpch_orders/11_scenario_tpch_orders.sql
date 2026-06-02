@@ -18,39 +18,40 @@ VALUES (
 );
 
 ------------------------------------------------------------------------------
--- 2. Datasets
+-- 2. Datasets + MODEL_DATASET links
+-- Datasets are now globally named; the MODEL_DATASET table links each
+-- dataset to this model.
 ------------------------------------------------------------------------------
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'lineitem', 'Shipped order lines (fact).', 'One row per (l_orderkey, l_linenumber).', 'tpch', 'lineitem'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('lineitem', 'Shipped order lines (fact).', 'One row per (l_orderkey, l_linenumber).', 'tpch', 'lineitem');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'orders', 'Order headers.', 'One row per order.', 'tpch', 'orders'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('orders', 'Order headers.', 'One row per order.', 'tpch', 'orders');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'customer', 'Customers.', 'One row per customer.', 'tpch', 'customer'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('customer', 'Customers.', 'One row per customer.', 'tpch', 'customer');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'supplier', 'Suppliers.', 'One row per supplier.', 'tpch', 'supplier'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('supplier', 'Suppliers.', 'One row per supplier.', 'tpch', 'supplier');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'part', 'Parts.', 'One row per part.', 'tpch', 'part'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('part', 'Parts.', 'One row per part.', 'tpch', 'part');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'partsupp', 'Part-supplier catalog (bridge).', 'One row per (ps_partkey, ps_suppkey).', 'tpch', 'partsupp'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('partsupp', 'Part-supplier catalog (bridge).', 'One row per (ps_partkey, ps_suppkey).', 'tpch', 'partsupp');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'nation', 'Nations.', 'One row per nation.', 'tpch', 'nation'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('nation', 'Nations.', 'One row per nation.', 'tpch', 'nation');
 
-INSERT INTO demo_user.DATASET (model_id, dataset_name, description, granularity_desc, DataBaseName, TableName)
-SELECT m.model_id, 'region', 'Regions.', 'One row per region.', 'tpch', 'region'
-FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
+INSERT INTO demo_user.DATASET (dataset_name, description, granularity_desc, DataBaseName, TableName)
+VALUES ('region', 'Regions.', 'One row per region.', 'tpch', 'region');
+
+-- Link all datasets to the tpch_orders model
+INSERT INTO demo_user.MODEL_DATASET (model_id, dataset_id, is_primary)
+SELECT m.model_id, d.dataset_id, CASE WHEN d.dataset_name='lineitem' THEN 1 ELSE 0 END
+FROM demo_user.SEMANTIC_MODEL m, demo_user.DATASET d
+WHERE m.model_name='tpch_orders'
+  AND d.dataset_name IN ('lineitem','orders','customer','supplier','part','partsupp','nation','region');
 
 ------------------------------------------------------------------------------
 -- 3. Fields
@@ -62,7 +63,7 @@ FROM demo_user.SEMANTIC_MODEL m WHERE m.model_name='tpch_orders';
 -- lineitem
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('l_orderkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('l_orderkey' AS VARCHAR(10000)) AS expr, CAST('FK to orders.' AS VARCHAR(10000)) AS descr, CAST('Order Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('l_orderkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'l_linenumber','K','l_linenumber','Line sequence inside the order.','Line Number',0,0,'INTEGER','l_linenumber',2 FROM (SELECT 1 x) a
@@ -84,7 +85,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='lineitem';
 -- orders
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('o_orderkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('o_orderkey' AS VARCHAR(10000)) AS expr, CAST('Order surrogate key.' AS VARCHAR(10000)) AS descr, CAST('Order Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('o_orderkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'o_custkey','K','o_custkey','FK to customer (placed-by).','Placed-by Customer Key',0,0,'INTEGER','o_custkey',2 FROM (SELECT 1 x) a
@@ -101,7 +102,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='orders';
 -- customer
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('c_custkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('c_custkey' AS VARCHAR(10000)) AS expr, CAST('Customer key.' AS VARCHAR(10000)) AS descr, CAST('Customer Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('c_custkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'c_name','A','c_name','Customer name.','Customer',1,0,'VARCHAR(25)','c_name',2 FROM (SELECT 1 x) a
@@ -114,7 +115,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='customer';
 -- supplier
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('s_suppkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('s_suppkey' AS VARCHAR(10000)) AS expr, CAST('Supplier key.' AS VARCHAR(10000)) AS descr, CAST('Supplier Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('s_suppkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 's_name','A','s_name','Supplier name.','Supplier',1,0,'VARCHAR(25)','s_name',2 FROM (SELECT 1 x) a
@@ -126,7 +127,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='supplier';
 -- part
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('p_partkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('p_partkey' AS VARCHAR(10000)) AS expr, CAST('Part key.' AS VARCHAR(10000)) AS descr, CAST('Part Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('p_partkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'p_name','A','p_name','Part name.','Part',1,0,'VARCHAR(55)','p_name',2 FROM (SELECT 1 x) a
@@ -140,7 +141,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='part';
 -- partsupp
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('ps_partkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('ps_partkey' AS VARCHAR(10000)) AS expr, CAST('FK to part (component of composite PK).' AS VARCHAR(10000)) AS descr, CAST('Part Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('ps_partkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'ps_suppkey','K','ps_suppkey','FK to supplier (component of composite PK).','Supplier Key',0,0,'INTEGER','ps_suppkey',2 FROM (SELECT 1 x) a
@@ -152,7 +153,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='partsupp';
 -- nation
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('n_nationkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('n_nationkey' AS VARCHAR(10000)) AS expr, CAST('Nation key.' AS VARCHAR(10000)) AS descr, CAST('Nation Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('n_nationkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'n_name','A','n_name','Nation display name.','Nation',1,0,'VARCHAR(25)','n_name',2 FROM (SELECT 1 x) a
@@ -163,7 +164,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='nation';
 -- region
 INSERT INTO demo_user.FIELD (dataset_id, field_name, field_type_code, expression, description, label, is_dimension, is_time_dimension, data_type, ColumnName, field_order)
 SELECT d.dataset_id, x.field_name, x.fc, x.expr, x.descr, x.lbl, x.isd, x.ist, x.dt, x.col, x.ord
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id,
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id,
   (
     SELECT CAST('r_regionkey' AS VARCHAR(200)) AS field_name, CAST('K' AS CHAR(1)) AS fc, CAST('r_regionkey' AS VARCHAR(10000)) AS expr, CAST('Region key.' AS VARCHAR(10000)) AS descr, CAST('Region Key' AS VARCHAR(500)) AS lbl, CAST(0 AS BYTEINT) AS isd, CAST(0 AS BYTEINT) AS ist, CAST('INTEGER' AS VARCHAR(200)) AS dt, CAST('r_regionkey' AS VARCHAR(128)) AS col, CAST(1 AS SMALLINT) AS ord FROM (SELECT 1 x) a
     UNION ALL SELECT 'r_name','A','r_name','Region display name.','Region',1,0,'VARCHAR(25)','r_name',2 FROM (SELECT 1 x) a
@@ -176,7 +177,7 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='region';
 -- Single-column PKs
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 1, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id
 WHERE m.model_name='tpch_orders' AND (
     (d.dataset_name='orders'   AND f.field_name='o_orderkey') OR
@@ -190,26 +191,26 @@ WHERE m.model_name='tpch_orders' AND (
 -- lineitem composite PK (l_orderkey, l_linenumber)
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 1, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='l_orderkey'
 WHERE m.model_name='tpch_orders' AND d.dataset_name='lineitem';
 
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 2, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='l_linenumber'
 WHERE m.model_name='tpch_orders' AND d.dataset_name='lineitem';
 
 -- partsupp composite PK (ps_partkey, ps_suppkey)
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 1, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='ps_partkey'
 WHERE m.model_name='tpch_orders' AND d.dataset_name='partsupp';
 
 INSERT INTO demo_user.DATASET_KEY (dataset_id, key_type, key_ordinal, column_position, field_id)
 SELECT d.dataset_id, 'PK', 0, 2, f.field_id
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='ps_suppkey'
 WHERE m.model_name='tpch_orders' AND d.dataset_name='partsupp';
 
@@ -227,8 +228,10 @@ WHERE m.model_name='tpch_orders' AND d.dataset_name='partsupp';
 -- lineitem -> orders
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'lineitem_to_orders','Lineitem belongs to order.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='lineitem' AND dt.dataset_name='orders';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -236,7 +239,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='l_orderkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='o_orderkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_orders';
@@ -244,8 +248,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_orders';
 -- lineitem -> part
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'lineitem_to_part','Lineitem references a part.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='lineitem' AND dt.dataset_name='part';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -253,7 +259,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='l_partkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='p_partkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_part';
@@ -261,8 +268,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_part';
 -- lineitem -> supplier
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'lineitem_to_supplier','Lineitem references a supplier.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='lineitem' AND dt.dataset_name='supplier';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -270,7 +279,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='l_suppkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='s_suppkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_supplier';
@@ -279,8 +289,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_supplier';
 -- Same two datasets, same key type; the ONLY disambiguator is the role.
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint, role_name)
 SELECT df.dataset_id, dt.dataset_id, 'orders_placed_by_customer','Customer who placed the order.','MANY_TO_ONE','INNER','placed_by'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='orders' AND dt.dataset_name='customer';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -288,15 +300,18 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='o_custkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='c_custkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='orders_placed_by_customer';
 
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint, role_name)
 SELECT df.dataset_id, dt.dataset_id, 'orders_billed_to_customer','Customer who is billed for the order.','MANY_TO_ONE','INNER','billed_to'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='orders' AND dt.dataset_name='customer';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -304,7 +319,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='o_billing_custkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='c_custkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='orders_billed_to_customer';
@@ -312,8 +328,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='orders_billed_to_custo
 -- customer -> nation (role-played: customer_nation vs supplier_nation)
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint, role_name)
 SELECT df.dataset_id, dt.dataset_id, 'customer_to_nation','Customer belongs to nation.','MANY_TO_ONE','INNER','customer_nation'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='customer' AND dt.dataset_name='nation';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -321,7 +339,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='c_nationkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='n_nationkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='customer_to_nation';
@@ -329,8 +348,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='customer_to_nation';
 -- supplier -> nation (role-played: supplier_nation)
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint, role_name)
 SELECT df.dataset_id, dt.dataset_id, 'supplier_to_nation','Supplier belongs to nation.','MANY_TO_ONE','INNER','supplier_nation'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='supplier' AND dt.dataset_name='nation';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -338,7 +359,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='s_nationkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='n_nationkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='supplier_to_nation';
@@ -346,8 +368,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='supplier_to_nation';
 -- nation -> region
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'nation_to_region','Nation belongs to region.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='nation' AND dt.dataset_name='region';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -355,7 +379,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='n_regionkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='r_regionkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='nation_to_region';
@@ -363,8 +388,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='nation_to_region';
 -- partsupp -> part
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'partsupp_to_part','Partsupp references a part.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='partsupp' AND dt.dataset_name='part';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -372,7 +399,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='ps_partkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='p_partkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='partsupp_to_part';
@@ -380,8 +408,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='partsupp_to_part';
 -- partsupp -> supplier
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'partsupp_to_supplier','Partsupp references a supplier.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='partsupp' AND dt.dataset_name='supplier';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -389,7 +419,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='ps_suppkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='s_suppkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='partsupp_to_supplier';
@@ -398,8 +429,10 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='partsupp_to_supplier';
 INSERT INTO demo_user.RELATIONSHIP (from_dataset_id, to_dataset_id, relationship_name, description, cardinality, join_type_hint)
 SELECT df.dataset_id, dt.dataset_id, 'lineitem_to_partsupp',
        'Lineitem references a (part,supplier) row in partsupp — composite join.','MANY_TO_ONE','INNER'
-FROM demo_user.DATASET df INNER JOIN demo_user.DATASET dt ON df.model_id=dt.model_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+FROM demo_user.DATASET df
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
+, demo_user.DATASET dt
 WHERE m.model_name='tpch_orders' AND df.dataset_name='lineitem' AND dt.dataset_name='partsupp';
 
 INSERT INTO demo_user.REL_COLUMN_MAP (relationship_id, column_position, from_field_id, to_field_id)
@@ -407,7 +440,8 @@ SELECT r.relationship_id, 1, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='l_partkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='ps_partkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_partsupp';
@@ -417,7 +451,8 @@ SELECT r.relationship_id, 2, ff.field_id, tf.field_id
 FROM demo_user.RELATIONSHIP r
 INNER JOIN demo_user.DATASET df ON r.from_dataset_id=df.dataset_id
 INNER JOIN demo_user.DATASET dt ON r.to_dataset_id=dt.dataset_id
-INNER JOIN demo_user.SEMANTIC_MODEL m ON df.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=df.dataset_id
+INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 INNER JOIN demo_user.FIELD ff ON ff.dataset_id=df.dataset_id AND ff.field_name='l_suppkey'
 INNER JOIN demo_user.FIELD tf ON tf.dataset_id=dt.dataset_id AND tf.field_name='ps_suppkey'
 WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_partsupp';
@@ -430,7 +465,7 @@ WHERE m.model_name='tpch_orders' AND r.relationship_name='lineitem_to_partsupp';
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team, default_time_grain)
 SELECT m.model_id, 'revenue','Canonical TPC-H revenue: SUM(l_extendedprice * (1 - l_discount)).',
        d.dataset_id,'SIMPLE',1,1,'finance-analytics','MONTH'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 WHERE m.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -446,7 +481,7 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='revenue';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name IN ('l_extendedprice','l_discount')
 WHERE m.model_name='tpch_orders' AND mt.metric_name='revenue';
 
@@ -455,7 +490,7 @@ INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_datase
 SELECT m.model_id, 'promo_revenue',
        'Revenue from promotional parts (p_type starts with PROMO). Requires lineitem -> part join.',
        d.dataset_id,'SIMPLE',1,1,'finance-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 WHERE m.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -473,7 +508,7 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_revenue';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, CASE WHEN f.field_name='p_type' THEN 'FILTER' ELSE 'MEASURE' END
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id
 WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_revenue'
   AND ((d.dataset_name='lineitem' AND f.field_name IN ('l_extendedprice','l_discount'))
@@ -482,7 +517,7 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_revenue'
 -- count_orders
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'count_orders','Distinct count of orders.',d.dataset_id,'SIMPLE',0,1,'finance-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='orders'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='orders'
 WHERE m.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -498,14 +533,14 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='count_orders';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='orders'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='orders'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='o_orderkey'
 WHERE m.model_name='tpch_orders' AND mt.metric_name='count_orders';
 
 -- avg_qty
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team)
 SELECT m.model_id, 'avg_qty','Average quantity per lineitem.',d.dataset_id,'SIMPLE',0,1,'finance-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 WHERE m.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -521,7 +556,7 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='avg_qty';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, 'MEASURE'
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='l_quantity'
 WHERE m.model_name='tpch_orders' AND mt.metric_name='avg_qty';
 
@@ -530,7 +565,7 @@ INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_datase
 SELECT m.model_id, 'promo_share',
        'Share of revenue attributed to promotional parts. RATIO of promo_revenue / revenue.',
        d.dataset_id,'RATIO',0,0,'finance-analytics'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
+FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id AND d.dataset_name='lineitem'
 WHERE m.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -548,102 +583,12 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_share';
 INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT mt.metric_id, f.field_id, CASE WHEN f.field_name='p_type' THEN 'FILTER' ELSE 'MEASURE' END
 FROM demo_user.METRIC mt INNER JOIN demo_user.SEMANTIC_MODEL m ON mt.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id
+INNER JOIN demo_user.MODEL_DATASET md2 ON md2.model_id=m.model_id INNER JOIN demo_user.DATASET d ON d.dataset_id=md2.dataset_id
 INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id
 WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_share'
   AND ((d.dataset_name='lineitem' AND f.field_name IN ('l_extendedprice','l_discount'))
        OR (d.dataset_name='part' AND f.field_name='p_type'));
 
-------------------------------------------------------------------------------
--- 7. Semantic view + members
-------------------------------------------------------------------------------
-INSERT INTO demo_user.SEMANTIC_VIEW (model_id, view_name, description, primary_dataset_id, timeseries_field, is_certified, is_public, owner_user)
-SELECT m.model_id, 'order_supply_analytics',
-       'Full-supply-chain order analytics: dimensions from customer/nation/region, supplier/nation/region, part/brand/type; measures for revenue family.',
-       d.dataset_id, 'o_orderdate', 1, 1, 'DEMO_USER'
-FROM demo_user.SEMANTIC_MODEL m INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
-WHERE m.model_name='tpch_orders';
-
--- dimensions
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 1, 'order_date', 'TIME_DIMENSION', f.field_id, 'Order Date', 1, 1
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='orders'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='o_orderdate'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 2, 'ship_date', 'TIME_DIMENSION', f.field_id, 'Ship Date', 1, 2
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='l_shipdate'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 3, 'customer_nation', 'DIMENSION', f.field_id, 'Customer Nation', 1, 3
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='nation'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='n_name'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 4, 'region', 'DIMENSION', f.field_id, 'Region', 1, 4
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='region'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='r_name'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 5, 'market_segment', 'DIMENSION', f.field_id, 'Market Segment', 1, 5
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='customer'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='c_mktsegment'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 6, 'brand', 'DIMENSION', f.field_id, 'Brand', 1, 6
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='part'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='p_brand'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, field_id, display_name, is_public, member_order)
-SELECT v.view_id, 7, 'ship_mode', 'DIMENSION', f.field_id, 'Ship Mode', 1, 7
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.DATASET d ON d.model_id=m.model_id AND d.dataset_name='lineitem'
-INNER JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='l_shipmode'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
--- measures
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 10, 'revenue', 'MEASURE', mt.metric_id, 'Revenue', 1, 10
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='revenue'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 11, 'promo_revenue', 'MEASURE', mt.metric_id, 'Promo Revenue', 1, 11
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='promo_revenue'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 12, 'promo_share', 'MEASURE', mt.metric_id, 'Promo Share', 1, 12
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='promo_share'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 13, 'count_orders', 'MEASURE', mt.metric_id, 'Orders', 1, 13
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='count_orders'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
-
-INSERT INTO demo_user.VIEW_MEMBER (view_id, member_ordinal, member_name, member_type, metric_id, display_name, is_public, member_order)
-SELECT v.view_id, 14, 'avg_qty', 'MEASURE', mt.metric_id, 'Avg Qty', 1, 14
-FROM demo_user.SEMANTIC_VIEW v INNER JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-INNER JOIN demo_user.METRIC mt ON mt.model_id=m.model_id AND mt.metric_name='avg_qty'
-WHERE m.model_name='tpch_orders' AND v.view_name='order_supply_analytics';
 
 ------------------------------------------------------------------------------
 -- 8. AI context and format specs
@@ -686,5 +631,5 @@ WHERE m.model_name='tpch_orders' AND mt.metric_name='promo_share';
 INSERT INTO demo_user.CUSTOM_EXTENSION (entity_type, entity_id, vendor_name, extension_data)
 SELECT 'DATASET', d.dataset_id, 'TERADATA',
        NEW JSON('{"primary_index":["l_orderkey"],"partitioning":"RANGE_N(l_shipdate BETWEEN DATE ''1992-01-01'' AND DATE ''1998-12-31'' EACH INTERVAL ''1'' MONTH)"}')
-FROM demo_user.DATASET d INNER JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+FROM demo_user.DATASET d INNER JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id INNER JOIN demo_user.SEMANTIC_MODEL m ON md.model_id=m.model_id
 WHERE m.model_name='tpch_orders' AND d.dataset_name='lineitem';

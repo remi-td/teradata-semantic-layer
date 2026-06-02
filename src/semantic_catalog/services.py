@@ -222,7 +222,8 @@ def _load_dataset_relationships(
                         THEN to_d.dataset_name
                         ELSE from_d.dataset_name END
               FROM {db}.DATASET d
-              JOIN {db}.SEMANTIC_MODEL sm ON sm.model_id = d.model_id
+              JOIN {db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+              JOIN {db}.SEMANTIC_MODEL sm ON sm.model_id = md.model_id
               JOIN {db}.RELATIONSHIP  r
                 ON r.from_dataset_id = d.dataset_id
                 OR r.to_dataset_id   = d.dataset_id

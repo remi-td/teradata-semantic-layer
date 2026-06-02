@@ -20,7 +20,10 @@ class ModelSummary(BaseModel):
     description: Optional[str] = None
     dataset_count: int = 0
     metric_count: int = 0
-    view_count: int = 0
+    model_family: Optional[str] = None
+    model_version: int = 1
+    is_latest: bool = True
+    is_deprecated: bool = False
 
 
 class SearchHit(BaseModel):
@@ -45,7 +48,7 @@ class GraphEdge(BaseModel):
     id: str
     source: str
     target: str
-    kind: str            # RELATIONSHIP | METRIC_OF | VIEW_OF
+    kind: str            # RELATIONSHIP | METRIC_OF
     label: Optional[str] = None
     cardinality: Optional[str] = None
     role_name: Optional[str] = None

@@ -11,17 +11,21 @@ CREATE MULTISET TABLE demo_user.SEMANTIC_MODEL, FALLBACK (
     owner_user    VARCHAR(128) CHARACTER SET UNICODE NOT CASESPECIFIC,
     owner_group   VARCHAR(128) CHARACTER SET UNICODE NOT CASESPECIFIC,
     is_active     BYTEINT DEFAULT 1 NOT NULL,
+    model_family  VARCHAR(200) CHARACTER SET UNICODE NOT CASESPECIFIC,
+    model_version SMALLINT DEFAULT 1 NOT NULL,
+    is_latest     BYTEINT DEFAULT 1 NOT NULL,
+    is_deprecated BYTEINT DEFAULT 0 NOT NULL,
     created_ts    TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) NOT NULL,
     updated_ts    TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) NOT NULL
 )
 UNIQUE PRIMARY INDEX (model_id)
-INDEX ux_semantic_model_name (model_name);
+INDEX ux_semantic_model_name (model_name)
+INDEX ix_model_family (model_family);
 
 CREATE MULTISET TABLE demo_user.DATASET, FALLBACK (
     dataset_id        INTEGER GENERATED ALWAYS AS IDENTITY
                           (START WITH 1 INCREMENT BY 1 MINVALUE 1
                            MAXVALUE 2147483647 NO CYCLE) NOT NULL,
-    model_id          INTEGER NOT NULL,
     dataset_name      VARCHAR(200) CHARACTER SET UNICODE NOT CASESPECIFIC NOT NULL,
     description       VARCHAR(10000) CHARACTER SET UNICODE,
     granularity_desc  VARCHAR(1000) CHARACTER SET UNICODE,
@@ -32,7 +36,7 @@ CREATE MULTISET TABLE demo_user.DATASET, FALLBACK (
     updated_ts        TIMESTAMP(6) DEFAULT CURRENT_TIMESTAMP(6) NOT NULL
 )
 UNIQUE PRIMARY INDEX (dataset_id)
-INDEX ux_dataset_nk (model_id, dataset_name)
+UNIQUE INDEX ux_dataset_name (dataset_name)
 INDEX ix_dataset_phys (DataBaseName, TableName);
 
 CREATE MULTISET TABLE demo_user.FIELD, FALLBACK (

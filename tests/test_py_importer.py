@@ -119,16 +119,16 @@ def test_model_insert_then_upsert() -> None:
 def test_dataset_splits_source_table() -> None:
     cur = FakeCursor()
     cur.script([1])               # model_id
-    cur.script(None)              # existing dataset check
+    cur.script(None)              # existing dataset check (global by name)
     cur.script([7])               # post-insert id lookup
+    cur.script(None)              # MODEL_DATASET link check (no existing link)
     status, _, eid = import_entity(cur, DB, "m", "DATASET",
                                    {"name": "fact", "source_table": "raw.fact_tbl"})
     assert status == "OK" and eid == 7
     insert = next(sql for sql, _ in cur.calls if "INSERT INTO demo_user.DATASET" in sql)
-    # params are position 0: model_id, 1: dataset_name, 4: DataBaseName,
-    # 5: TableName
+    # params: 0: dataset_name, 3: DataBaseName, 4: TableName
     params = next(p for sql, p in cur.calls if sql == insert)
-    assert params[4] == "raw" and params[5] == "fact_tbl"
+    assert params[3] == "raw" and params[4] == "fact_tbl"
 
 
 def test_field_requires_known_dataset() -> None:

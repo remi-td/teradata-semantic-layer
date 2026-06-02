@@ -27,6 +27,8 @@ DROP TABLE demo_user.CUSTOM_EXTENSION;
 DROP TABLE demo_user.SECURITY_POLICY;
 DROP TABLE demo_user.FORMAT_SPEC;
 DROP TABLE demo_user.AI_CONTEXT;
+DROP TABLE demo_user.MODEL_DATASET;
+-- Legacy tables (present in older installs; drop silently if missing):
 DROP TABLE demo_user.VIEW_MEMBER;
 DROP TABLE demo_user.SEMANTIC_VIEW;
 DROP TABLE demo_user.METRIC_FILTER;

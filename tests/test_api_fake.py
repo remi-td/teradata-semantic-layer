@@ -15,8 +15,9 @@ COMMON_RECIPES = [
     # list_models
     (
         "from demo_user.semantic_model",
-        ["model_id", "model_name", "description", "ds_count", "mt_count", "vw_count"],
-        [(1, "tpch_orders", "Orders model", 8, 4, 1)],
+        ["model_id", "model_name", "description", "ds_count", "mt_count",
+         "model_family", "model_version", "is_latest"],
+        [(1, "tpch_orders", "Orders model", 8, 4, None, 1, 1)],
     ),
     # /api/ping
     ("select 1", ["one"], [(1,)]),
@@ -111,7 +112,7 @@ def test_describe_404_when_empty(client_fake, monkeypatch):
 
 
 def test_graph_structure(client_fake, monkeypatch):
-    """Build a graph from recipes that cover DATASET / METRIC / RELATIONSHIP / VIEW."""
+    """Build a graph from recipes that cover DATASET / METRIC / RELATIONSHIP."""
     from conftest import FakePool
     from semantic_catalog import db
 
@@ -131,9 +132,6 @@ def test_graph_structure(client_fake, monkeypatch):
         ("from demo_user.relationship r",
          ["rid","rname","from_id","to_id","card","jth","role"],
          [(100,"li_to_cust",1,2,"MANY_TO_ONE","INNER",None)]),
-        ("from demo_user.semantic_view v",
-         ["vid","vname","desc","pdsid","cert","pub"],
-         [(50,"order_view","Exec view",1,1,1)]),
     ]
     monkeypatch.setattr(db, "_pool_singleton", FakePool(recipes))
 
@@ -143,16 +141,16 @@ def test_graph_structure(client_fake, monkeypatch):
     kinds = [n["kind"] for n in g["nodes"]]
     assert kinds.count("DATASET") == 3
     assert kinds.count("METRIC") == 1
-    assert kinds.count("VIEW") == 1
+    assert kinds.count("VIEW") == 0
     sub_kinds = {n["label"]: n["sub_kind"] for n in g["nodes"] if n["kind"] == "DATASET"}
     assert sub_kinds["sales_cube"] == "CUBE"
     assert sub_kinds["lineitem"] == "TABLE"
 
-    # edges: metric_of + relationship + view_of
+    # edges: metric_of + relationship
     e_kinds = [e["kind"] for e in g["edges"]]
     assert "METRIC_OF" in e_kinds
     assert "RELATIONSHIP" in e_kinds
-    assert "VIEW_OF" in e_kinds
+    assert "VIEW_OF" not in e_kinds
 
 
 def test_tree_endpoint(client_fake, monkeypatch):
@@ -162,7 +160,7 @@ def test_tree_endpoint(client_fake, monkeypatch):
     recipes = [
         ("from demo_user.semantic_model where model_name",
          ["model_id","model_name","description"], [(1,"tpch_orders","Orders")]),
-        ("from demo_user.dataset d where d.model_id",
+        ("from demo_user.dataset d",
          ["dataset_id","dataset_name","sub","desc"],
          [(1,"lineitem","TABLE","Fact")]),
         ("from demo_user.field f",
@@ -172,8 +170,6 @@ def test_tree_endpoint(client_fake, monkeypatch):
         ("from demo_user.metric mt",
          ["n","t","d","ds","cert"],
          [("revenue","SIMPLE","Sales","lineitem",1)]),
-        ("from demo_user.semantic_view v",
-         ["n","d","pd","cert"], []),
         ("from demo_user.relationship r",
          ["n","f","t","c","j"], []),
     ]
@@ -186,6 +182,7 @@ def test_tree_endpoint(client_fake, monkeypatch):
     assert body["datasets"][0]["name"] == "lineitem"
     assert {f["name"] for f in body["datasets"][0]["fields"]} == {"l_orderkey", "l_extendedprice"}
     assert body["metrics"][0]["name"] == "revenue"
+    assert "views" not in body
 
 
 def test_describe_dataset_includes_relationships(client_fake, monkeypatch):

@@ -8,7 +8,6 @@ COLLECT STATISTICS COLUMN (model_id)          ON demo_user.SEMANTIC_MODEL;
 COLLECT STATISTICS COLUMN (model_name)        ON demo_user.SEMANTIC_MODEL;
 
 COLLECT STATISTICS COLUMN (dataset_id)        ON demo_user.DATASET;
-COLLECT STATISTICS COLUMN (model_id)          ON demo_user.DATASET;
 COLLECT STATISTICS COLUMN (dataset_name)      ON demo_user.DATASET;
 COLLECT STATISTICS COLUMN (DataBaseName, TableName) ON demo_user.DATASET;
 
@@ -38,13 +37,8 @@ COLLECT STATISTICS COLUMN (dialect)           ON demo_user.METRIC_EXPRESSION;
 COLLECT STATISTICS COLUMN (metric_id)         ON demo_user.METRIC_FIELD_REF;
 COLLECT STATISTICS COLUMN (field_id)          ON demo_user.METRIC_FIELD_REF;
 
-COLLECT STATISTICS COLUMN (view_id)           ON demo_user.SEMANTIC_VIEW;
-COLLECT STATISTICS COLUMN (model_id)          ON demo_user.SEMANTIC_VIEW;
-COLLECT STATISTICS COLUMN (view_name)         ON demo_user.SEMANTIC_VIEW;
-
-COLLECT STATISTICS COLUMN (view_id)           ON demo_user.VIEW_MEMBER;
-COLLECT STATISTICS COLUMN (field_id)          ON demo_user.VIEW_MEMBER;
-COLLECT STATISTICS COLUMN (metric_id)         ON demo_user.VIEW_MEMBER;
+COLLECT STATISTICS COLUMN (model_id)          ON demo_user.MODEL_DATASET;
+COLLECT STATISTICS COLUMN (dataset_id)        ON demo_user.MODEL_DATASET;
 
 COLLECT STATISTICS COLUMN (entity_type, entity_id) ON demo_user.AI_CONTEXT;
 COLLECT STATISTICS COLUMN (entity_type, entity_id) ON demo_user.FORMAT_SPEC;

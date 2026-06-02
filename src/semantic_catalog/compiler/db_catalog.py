@@ -45,14 +45,16 @@ class DbCatalog:
 
     def resolve_model_id(self, model_name: str) -> Optional[int]:
         r = self._fetchone(
-            f"SELECT model_id FROM {self.db}.SEMANTIC_MODEL WHERE model_name = ?",
+            f"SELECT model_id FROM {self.db}.SEMANTIC_MODEL"
+            f" WHERE model_name = ? AND is_latest = 1 AND is_deprecated = 0",
             model_name,
         )
         return int(r[0]) if r else None
 
     def list_model_names(self) -> List[str]:
         rows = self._fetchall(
-            f"SELECT model_name FROM {self.db}.SEMANTIC_MODEL ORDER BY model_name"
+            f"SELECT model_name FROM {self.db}.SEMANTIC_MODEL"
+            f" WHERE is_deprecated = 0 ORDER BY model_name"
         )
         return [str(r[0]).strip() for r in rows if r and r[0] is not None]
 
@@ -60,10 +62,12 @@ class DbCatalog:
 
     def load_datasets(self, model_id: int) -> List[DatasetRef]:
         rows = self._fetchall(
-            f"""SELECT dataset_id, dataset_name, DataBaseName, TableName,
-                       CAST(source_query AS VARCHAR(8000))
-                  FROM {self.db}.DATASET WHERE model_id = ?
-                  ORDER BY dataset_id""",
+            f"""SELECT d.dataset_id, d.dataset_name, d.DataBaseName, d.TableName,
+                       CAST(d.source_query AS VARCHAR(8000))
+                  FROM {self.db}.DATASET d
+                  JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+                 WHERE md.model_id = ?
+                 ORDER BY d.dataset_id""",
             model_id,
         )
         out: List[DatasetRef] = []
@@ -104,7 +108,8 @@ class DbCatalog:
                            CAST(f.expression AS VARCHAR(2000)), f.is_time_dimension
                       FROM {self.db}.FIELD f
                       JOIN {self.db}.DATASET d ON d.dataset_id = f.dataset_id
-                     WHERE d.model_id = ? AND d.dataset_name = ? AND f.field_name = ?""",
+                      JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+                     WHERE md.model_id = ? AND d.dataset_name = ? AND f.field_name = ?""",
                 model_id, dataset_name, field_name,
             )
         else:
@@ -113,7 +118,8 @@ class DbCatalog:
                            CAST(f.expression AS VARCHAR(2000)), f.is_time_dimension
                       FROM {self.db}.FIELD f
                       JOIN {self.db}.DATASET d ON d.dataset_id = f.dataset_id
-                     WHERE d.model_id = ? AND f.field_name = ?""",
+                      JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+                     WHERE md.model_id = ? AND f.field_name = ?""",
                 model_id, field_name,
             )
         if not r:
@@ -150,7 +156,8 @@ class DbCatalog:
             f"""SELECT d.dataset_name, f.field_name
                   FROM {self.db}.FIELD f
                   JOIN {self.db}.DATASET d ON d.dataset_id = f.dataset_id
-                 WHERE d.model_id = ?
+                  JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+                 WHERE md.model_id = ?
                  ORDER BY d.dataset_name, f.field_name""",
             model_id,
         )
@@ -261,8 +268,8 @@ class DbCatalog:
                        r.from_dataset_id, r.to_dataset_id,
                        r.cardinality, r.role_name
                   FROM {self.db}.RELATIONSHIP r
-                  JOIN {self.db}.DATASET df ON df.dataset_id = r.from_dataset_id
-                 WHERE df.model_id = ?""",
+                  JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = r.from_dataset_id
+                 WHERE md.model_id = ?""",
             model_id,
         )
         return [
@@ -287,8 +294,8 @@ class DbCatalog:
                        r.from_dataset_id, r.to_dataset_id,
                        r.cardinality, r.role_name
                   FROM {self.db}.RELATIONSHIP r
-                  JOIN {self.db}.DATASET df ON df.dataset_id = r.from_dataset_id
-                 WHERE df.model_id = ?
+                  JOIN {self.db}.MODEL_DATASET md ON md.dataset_id = r.from_dataset_id
+                 WHERE md.model_id = ?
                    AND (r.role_name = ?
                         OR (r.role_name IS NULL AND r.relationship_name = ?))""",
             model_id, role_name, role_name,

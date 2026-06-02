@@ -75,6 +75,65 @@ def test_live_compile_roundtrip(live_client):
     assert out["compiled_sql"], "no SQL produced"
 
 
+def test_live_describe_dataset_surfaces_relationships(live_client):
+    """v0.4 enrichment: DATASET describe must include `relationships[]`
+    listing each incident edge with the canonical `prefix` token."""
+    r = live_client.get("/api/models")
+    if not any(m["model_name"] == "tpch_orders" for m in r.json()):
+        pytest.skip("tpch_orders not deployed")
+    r = live_client.get("/api/describe", params={
+        "entity_type": "DATASET", "entity_name": "part",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rels = body.get("relationships")
+    assert rels is not None, "relationships field missing"
+    assert len(rels) >= 1
+    # Every edge has the fields agents need to retry an AMBIGUOUS_PATH.
+    for h in rels:
+        assert h["prefix"]
+        assert h["direction"] in {"incoming", "outgoing"}
+        assert h["other_dataset"]
+        assert h["relationship_id"]
+
+
+def test_live_compile_unknown_model_has_suggestions(live_client):
+    """Hitting a non-existent model returns is_valid=0 and a
+    validation_message that names the offending code."""
+    r = live_client.post("/api/query/compile", json={
+        "model": "__definitely_not_a_real_model__",
+        "metrics": ["revenue"],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["is_valid"] == 0
+    assert "UNKNOWN_MODEL" in (body["validation_message"] or "")
+
+
+def test_live_role_prefix_resolves_via_relationship_name(live_client):
+    """tpch_orders seeds relationships with relationship_name set and
+    role_name NULL. Using `lineitem_to_part.p_brand` as a dimension
+    must compile (this is the bug the diagnostic report flagged)."""
+    r = live_client.get("/api/models")
+    if not any(m["model_name"] == "tpch_orders" for m in r.json()):
+        pytest.skip("tpch_orders not deployed")
+    body = {
+        "model": "tpch_orders",
+        "metrics": ["revenue"],
+        "dimensions": ["lineitem_to_part.p_brand"],
+        "limit": 5,
+    }
+    r = live_client.post("/api/query/compile", json=body)
+    assert r.status_code == 200, r.text
+    out = r.json()
+    # Either compiled cleanly, OR returned a non-AMBIGUOUS_PATH error
+    # (e.g. CHASM_TRAP if the model has fan-out warnings). The bug we're
+    # guarding against is "no field 'p_brand' on dataset 'lineitem_to_part'",
+    # which is now impossible.
+    msg = out.get("validation_message") or ""
+    assert "no field 'p_brand' on dataset 'lineitem_to_part'" not in msg, msg
+
+
 def test_live_import_metric_and_rollback(live_client):
     """Dry-run import: a brand new metric should validate and then roll back."""
     r = live_client.get("/api/models")

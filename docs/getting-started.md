@@ -199,6 +199,70 @@ Clients must then send `Authorization: Bearer <token>` on every
 
 ---
 
+---
+
+## 11. Role-qualified dimensions
+
+When a dimension dataset can be reached by more than one join path (e.g.
+`nation` is reached from both `supplier` and `customer`), the compiler
+requires a **role prefix** to disambiguate. Attempting the bare
+`nation.n_name` token fails with an `AMBIGUOUS_PATH` error that lists the
+available roles.
+
+### Direct role prefix
+
+Use the `role_name` of the relationship as the dim prefix:
+
+```json
+{
+  "model": "tpch_orders",
+  "metrics": ["revenue"],
+  "dimensions": ["customer_nation.n_name"]
+}
+```
+
+This compiles to `demo_user.nation AS customer_nation` with the join
+constrained to `customer_to_nation`.
+
+### Transitive role prefix
+
+The role prefix extends to datasets further down the chain. If the model
+has `nation → region` via `nation_to_region`, you can request a region
+field directly through the role prefix without adding an explicit `nation`
+dim:
+
+```json
+{
+  "model": "tpch_orders",
+  "metrics": ["revenue"],
+  "dimensions": ["customer_nation.r_name"]
+}
+```
+
+The compiler walks outgoing edges from `nation`, finds `r_name` on
+`region`, and emits `INNER JOIN demo_user.region AS customer_nation_region`.
+The output column is `customer_nation_r_name`.
+
+### Dual transitive paths
+
+Both role paths can appear in the same query. The compiler creates
+independent scoped aliases (`supplier_nation_region`,
+`customer_nation_region`) with separate join chains — no self-join, no
+cross-contamination:
+
+```json
+{
+  "model": "tpch_orders",
+  "metrics": ["avg_qty"],
+  "dimensions": ["supplier_nation.r_name", "customer_nation.r_name"]
+}
+```
+
+See the **[Design Guidelines](design-guidelines.md)** Pattern C for the
+full SQL output and the modelling instructions.
+
+---
+
 ## Where next
 
 - **[Server Guide](server-guide.md)** — deployment, configuration, scaling, MCP integration, troubleshooting.

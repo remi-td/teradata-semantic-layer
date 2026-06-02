@@ -249,6 +249,108 @@ def test_compile_tool_surfaces_compile_errors(mcp):
     assert inner["code"] == "UNKNOWN_MODEL"
 
 
+def test_unknown_model_returns_structured_suggestions(mcp):
+    """UNKNOWN_MODEL must include available_models + suggestions in details
+    so the agent can recover without re-prompting the user."""
+    client, pool = mcp
+    # Three scripted result sets in order:
+    # 1. services.run_query → catalog.resolve_model_id (returns None)
+    # 2. resolver.resolve   → catalog.resolve_model_id (still None → raises)
+    # 3. resolver           → catalog.list_model_names (suggestions)
+    pool.cur.script([], cols=["model_id"])
+    pool.cur.script([], cols=["model_id"])
+    pool.cur.script(
+        [("tpch_orders",), ("tpcds_retail",)], cols=["model_name"],
+    )
+    body = client.call_tool("semantic_compile", {
+        "request": {"model": "tpch_order", "metrics": ["x"]},  # near-miss
+    })
+    inner = body["result"]["structuredContent"]["result"]
+    assert inner["ok"] is False
+    assert inner["code"] == "UNKNOWN_MODEL"
+    details = inner["details"] or {}
+    assert details.get("available_models") == ["tpch_orders", "tpcds_retail"]
+    # Levenshtein-style fuzzy: "tpch_order" → "tpch_orders"
+    assert "tpch_orders" in (details.get("suggestions") or [])
+
+
+def test_describe_dataset_includes_relationship_hints(mcp):
+    """For DATASET entities, describe must surface a structured
+    relationships[] array with the canonical disambiguation prefix."""
+    client, pool = mcp
+    # m_semantic_describe → text attributes
+    pool.cur.script(
+        [(1, "name", "part"), (2, "type", "DIM")],
+        cols=["attr_ordinal", "attr_key", "attr_value"],
+    )
+    # _load_dataset_relationships → two incoming edges to part
+    pool.cur.script(
+        [
+            (101, "lineitem_to_part",  None, "MANY_TO_ONE", "incoming", "lineitem"),
+            (102, "partsupp_to_part",  None, "MANY_TO_ONE", "incoming", "partsupp"),
+        ],
+        cols=["relationship_id", "relationship_name", "role_name",
+              "cardinality", "direction", "other_dataset"],
+    )
+    body = client.call_tool("semantic_describe", {
+        "entity_type": "DATASET", "entity_name": "part",
+    })
+    inner = body["result"]["structuredContent"]["result"]
+    rels = inner["relationships"]
+    assert rels is not None and len(rels) == 2
+    # `prefix` is what the parser will accept; with no role_name set,
+    # falls back to relationship_name — exactly what AMBIGUOUS_PATH
+    # advertises.
+    prefixes = [r["prefix"] for r in rels]
+    assert "lineitem_to_part" in prefixes
+    assert "partsupp_to_part" in prefixes
+    # All other fields populated.
+    rel = rels[0]
+    assert rel["direction"] in {"incoming", "outgoing"}
+    assert rel["other_dataset"] in {"lineitem", "partsupp"}
+    assert rel["cardinality"] == "MANY_TO_ONE"
+    assert rel["relationship_id"] in {101, 102}
+
+
+def test_describe_non_dataset_omits_relationships(mcp):
+    """METRIC / VIEW / FIELD describes don't run the relationship query."""
+    client, pool = mcp
+    pool.cur.script(
+        [(1, "name", "revenue")],
+        cols=["attr_ordinal", "attr_key", "attr_value"],
+    )
+    body = client.call_tool("semantic_describe", {
+        "entity_type": "METRIC", "entity_name": "revenue",
+    })
+    inner = body["result"]["structuredContent"]["result"]
+    assert inner["relationships"] is None
+
+
+def test_tools_list_publishes_typed_compile_schema(mcp):
+    """semantic_compile.inputSchema must declare the QueryRequest fields
+    so agents see the exact shape (model, metrics, dimensions, ...) and
+    don't have to guess."""
+    client, _ = mcp
+    body = client.call("tools/list")
+    by_name = {t["name"]: t for t in body["result"]["tools"]}
+    schema = by_name["semantic_compile"]["inputSchema"]
+    # The argument is a single ``request`` parameter typed as QueryRequest.
+    props = schema.get("properties", {})
+    assert "request" in props
+    # Pydantic schemas live under $defs and are referenced via $ref.
+    defs = schema.get("$defs", {}) or schema.get("definitions", {})
+    assert "QueryRequest" in defs
+    qr_props = defs["QueryRequest"]["properties"]
+    for required_field in ("model", "metrics", "dimensions",
+                           "where", "having", "sort", "limit"):
+        assert required_field in qr_props, f"missing {required_field}"
+    # Same for execute tool — same schema.
+    assert "QueryRequest" in (
+        by_name["semantic_execute"].get("inputSchema", {}).get("$defs", {})
+        or by_name["semantic_execute"].get("inputSchema", {}).get("definitions", {})
+    )
+
+
 def test_bearer_token_enforced_when_env_set(monkeypatch):
     """When SEMANTIC_API_TOKEN is set, /mcp/* needs the right bearer."""
     monkeypatch.setenv(

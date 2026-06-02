@@ -27,6 +27,7 @@ from typing import Any, Dict, Optional
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
+from ..api.models import QueryRequest
 from . import tools as _tools
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,11 @@ def build_mcp_server() -> FastMCP:
             "Full metadata for one entity: dataset / metric / view / "
             "field / model. Returns (attr_ordinal, attr_key, attr_value) "
             "triples covering description, AI context, format spec, and "
-            "structural metadata."
+            "structural metadata. For DATASETs, the response also "
+            "includes a `relationships[]` list — each entry has a "
+            "`prefix` you can prepend in compile requests "
+            "(`prefix.field`) to force the path through that edge. "
+            "Use this to recover from AMBIGUOUS_PATH errors."
         ),
     )
     def semantic_describe(
@@ -116,23 +121,26 @@ def build_mcp_server() -> FastMCP:
     @mcp.tool(
         name="semantic_compile",
         description=(
-            "Compile a structured query request to Teradata SQL. "
-            "Returns the compiled SQL plus anchor/joined datasets and "
-            "validity flags."
+            "Compile a structured query request to Teradata SQL. Returns "
+            "the compiled SQL, the anchor + joined datasets, and validity "
+            "flags. On AMBIGUOUS_PATH / UNKNOWN_ENTITY / UNKNOWN_MODEL, the "
+            "response includes `details.suggestions` (or "
+            "`details.available_models`) listing exact retry tokens."
         ),
     )
-    def semantic_compile(request: Dict[str, Any]) -> Dict[str, Any]:
-        return _tools.semantic_compile(request=request)
+    def semantic_compile(request: QueryRequest) -> Dict[str, Any]:
+        return _tools.semantic_compile(request=request.model_dump())
 
     @mcp.tool(
         name="semantic_execute",
         description=(
-            "Compile and execute a query request, returning up to 500 "
-            "rows along with the SQL that was run."
+            "Compile and execute a query request, returning up to 500 rows "
+            "along with the SQL that was run. Same request schema as "
+            "semantic_compile; same structured-error contract."
         ),
     )
-    def semantic_execute(request: Dict[str, Any]) -> Dict[str, Any]:
-        return _tools.semantic_execute(request=request)
+    def semantic_execute(request: QueryRequest) -> Dict[str, Any]:
+        return _tools.semantic_execute(request=request.model_dump())
 
     @mcp.tool(
         name="semantic_export_osi",

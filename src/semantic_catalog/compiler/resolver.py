@@ -20,6 +20,7 @@ emit SQL; rendering is in render.py.
 """
 from __future__ import annotations
 
+import difflib
 import re
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -33,6 +34,21 @@ from .errors import (
     UnknownEntityError,
     UnknownModelError,
 )
+
+
+def _suggest(needle: str, haystack: List[str], n: int = 5) -> List[str]:
+    """Return the top-``n`` near-matches of ``needle`` in ``haystack``.
+
+    Falls back to the alphabetised ``haystack`` (truncated) when nothing
+    looks similar — agents always get *some* concrete options to try.
+    """
+    seen: List[str] = []
+    for item in difflib.get_close_matches(needle, haystack, n=n, cutoff=0.4):
+        if item not in seen:
+            seen.append(item)
+    if not seen:
+        seen = sorted(set(haystack))[:n]
+    return seen
 from .logical import (
     DatasetRef,
     FieldRef,
@@ -179,7 +195,9 @@ class _RequiredIndex:
         self._items: Dict[Tuple[int, str], DatasetRef] = {}
         self._order: List[Tuple[int, str]] = []
 
-    def add(self, ds: DatasetRef, *, alias: Optional[str] = None) -> DatasetRef:
+    def add(self, ds: DatasetRef, *, alias: Optional[str] = None,
+            role_edge_id: Optional[int] = None,
+            entry_from_alias: Optional[str] = None) -> DatasetRef:
         use_alias = alias or ds.alias or ds.dataset_name
         key = (ds.dataset_id, use_alias)
         if key in self._items:
@@ -188,6 +206,8 @@ class _RequiredIndex:
             dataset_id=ds.dataset_id, dataset_name=ds.dataset_name,
             database_name=ds.database_name, table_name=ds.table_name,
             source_query=ds.source_query, alias=use_alias,
+            role_edge_id=role_edge_id,
+            entry_from_alias=entry_from_alias,
         )
         self._items[key] = copy
         self._order.append(key)
@@ -211,7 +231,19 @@ class Resolver:
     def resolve(self, req: CompileRequest) -> LogicalPlan:
         model_id = self.catalog.resolve_model_id(req.model)
         if model_id is None:
-            raise UnknownModelError(f"Unknown model: {req.model}")
+            available: List[str] = []
+            try:
+                available = self.catalog.list_model_names()
+            except Exception:  # noqa: BLE001
+                pass
+            suggestions = _suggest(req.model, available) if available else []
+            raise UnknownModelError(
+                f"Unknown model: {req.model}",
+                details={
+                    "available_models": available,
+                    "suggestions": suggestions,
+                },
+            )
 
         required = _RequiredIndex()
 
@@ -324,7 +356,16 @@ class Resolver:
 
         row = self.catalog.find_metric(model_id, name)
         if row is None:
-            raise UnknownEntityError(f"Unknown metric: {name}")
+            available: List[str] = []
+            try:
+                available = self.catalog.list_metric_names(model_id)
+            except Exception:  # noqa: BLE001
+                pass
+            raise UnknownEntityError(
+                f"Unknown metric: {name}",
+                details={"suggestions": _suggest(name, available),
+                         "kind": "metric"},
+            )
 
         if row.base_metric_id is not None:
             # Filtered rollup — aggregate_arg is raw SQL, not allowed to
@@ -482,8 +523,52 @@ class Resolver:
                     )
                 field = self.catalog.find_field_on_dataset(target_ds.dataset_id, field_name)
                 if field is None:
+                    # Field not on the role's direct target — try walking
+                    # outgoing relationships transitively (e.g. customer_nation.r_name
+                    # resolves r_name on region via nation→region).
+                    trans = self._walk_transitive_role(
+                        model_id, role_rel, target_ds, field_name, prefix, token
+                    )
+                    if trans is not None:
+                        t_field, t_final_ds, t_intermediates, t_last_rel_id, t_entry_from = trans
+                        from_ds = self.catalog.load_dataset(role_rel.from_dataset_id)
+                        if from_ds is not None:
+                            required.add(from_ds)
+                        for t_ds, t_alias in t_intermediates:
+                            required.add(t_ds, alias=t_alias)
+                        # Derive a scoped alias so two role paths to the same
+                        # downstream dataset (e.g. supplier_nation_region and
+                        # customer_nation_region) remain distinct in the plan.
+                        final_alias = f"{prefix}_{t_final_ds.dataset_name}"
+                        required.add(t_final_ds, alias=final_alias,
+                                     role_edge_id=t_last_rel_id,
+                                     entry_from_alias=t_entry_from)
+                        col_alias = (
+                            f"{prefix}_{field_name}_{grain.lower()}"
+                            if grain else f"{prefix}_{field_name}"
+                        )
+                        resolved.append(ResolvedDim(
+                            field=t_field,
+                            dataset_alias=final_alias,
+                            grain=grain,
+                            role_edge_id=role_rel.relationship_id,
+                            column_alias=col_alias,
+                        ))
+                        continue
+                    available: List[str] = []
+                    try:
+                        ds_dot = f"{target_ds.dataset_name}."
+                        available = [
+                            f"{prefix}.{tok.split('.', 1)[1]}"
+                            for tok in self.catalog.list_field_tokens(model_id)
+                            if tok.startswith(ds_dot)
+                        ]
+                    except Exception:  # noqa: BLE001
+                        pass
                     raise UnknownEntityError(
-                        f"Dim '{token}': no field '{field_name}' on role '{prefix}'"
+                        f"Dim '{token}': no field '{field_name}' on role '{prefix}'",
+                        details={"suggestions": _suggest(token, available),
+                                 "kind": "dimension"},
                     )
                 alias = prefix
                 ds_for_required = target_ds
@@ -498,9 +583,16 @@ class Resolver:
             else:
                 field = self.catalog.find_field(model_id, prefix, field_name)
                 if field is None:
+                    available: List[str] = []
+                    try:
+                        available = self.catalog.list_field_tokens(model_id)
+                    except Exception:  # noqa: BLE001
+                        pass
                     raise UnknownEntityError(
                         f"Dim '{token}': no field '{field_name}'"
-                        + (f" on dataset '{prefix}'" if prefix else "")
+                        + (f" on dataset '{prefix}'" if prefix else ""),
+                        details={"suggestions": _suggest(token, available),
+                                 "kind": "dimension"},
                     )
                 ds_for_required = self.catalog.load_dataset(field.dataset_id)
                 alias = prefix or (ds_for_required.dataset_name if ds_for_required else field_name)
@@ -525,6 +617,76 @@ class Resolver:
                 column_alias=full_alias,
             ))
         return resolved
+
+    def _walk_transitive_role(
+        self,
+        model_id: int,
+        role_rel: "RelationshipRow",  # noqa: F821
+        start_ds: DatasetRef,
+        field_name: str,
+        prefix: str,
+        token: str,
+    ) -> "Optional[Tuple[FieldRef, DatasetRef, List[Tuple[DatasetRef, str]], int, str]]":
+        """BFS from *start_ds* over outgoing relationships to find *field_name*.
+
+        Returns ``(field, final_ds, intermediates, last_rel_id, entry_from_alias)``
+        on a unique hit:
+          - *intermediates*: ``(dataset, alias)`` pairs from *start_ds* up to but
+            not including *final_ds* — must be added to required.
+          - *last_rel_id*: the relationship_id of the edge leading into *final_ds*.
+          - *entry_from_alias*: alias of the dataset immediately before *final_ds*
+            in the path — the BFS must enter *final_ds* from that alias only.
+
+        Returns ``None`` when the field is unreachable.  Raises
+        ``AmbiguousPathError`` when multiple distinct datasets carry the field.
+        """
+        rels = self.catalog.load_relationships(model_id)
+        outgoing: Dict[int, List] = {}
+        for r in rels:
+            outgoing.setdefault(r.from_dataset_id, []).append(r)
+
+        # BFS state: (current_ds, path of (dataset, alias), last_rel_id entering current_ds)
+        visited: Set[int] = {start_ds.dataset_id}
+        queue: List[Tuple[DatasetRef, List[Tuple[DatasetRef, str]], Optional[int]]] = [
+            (start_ds, [(start_ds, prefix)], None)
+        ]
+        matches: List[Tuple[FieldRef, DatasetRef, List[Tuple[DatasetRef, str]], int, str]] = []
+
+        while queue:
+            cur_ds, path, _last_rel = queue.pop(0)
+            for rel in outgoing.get(cur_ds.dataset_id, []):
+                next_ds = self.catalog.load_dataset(rel.to_dataset_id)
+                if next_ds is None or next_ds.dataset_id in visited:
+                    continue
+                visited.add(next_ds.dataset_id)
+                # The alias of the node we're stepping FROM is the last element of path.
+                from_alias = path[-1][1]
+                field = self.catalog.find_field_on_dataset(next_ds.dataset_id, field_name)
+                if field is not None:
+                    matches.append((field, next_ds, path, rel.relationship_id, from_alias))
+                else:
+                    queue.append((
+                        next_ds,
+                        path + [(next_ds, next_ds.dataset_name)],
+                        rel.relationship_id,
+                    ))
+
+        if not matches:
+            return None
+        if len(matches) > 1:
+            paths_desc = [
+                "→".join(alias for _, alias in m[2]) + f"→{m[1].dataset_name}"
+                for m in matches
+            ]
+            raise AmbiguousPathError(
+                f"Dim '{token}': field '{field_name}' is reachable via multiple "
+                f"paths from role '{prefix}': {', '.join(paths_desc)}. "
+                f"Use a more specific role or dataset prefix.",
+                roles=[m[1].dataset_name for m in matches],
+                details={"paths": paths_desc, "target_field": field_name},
+            )
+
+        return matches[0]
 
     def _check_unambiguous(self, model_id: int, ds: DatasetRef, token: str) -> None:
         incoming = [
@@ -586,8 +748,18 @@ class Resolver:
                         ds_for_required = ds
                         break
                 if ds_for_required is None:
+                    available: List[str] = []
+                    try:
+                        available = [
+                            d.dataset_name
+                            for d in self.catalog.load_datasets(model_id)
+                        ]
+                    except Exception:  # noqa: BLE001
+                        pass
                     raise UnknownEntityError(
-                        f"WHERE filter references unknown dataset/role: {prefix}"
+                        f"WHERE filter references unknown dataset/role: {prefix}",
+                        details={"suggestions": _suggest(prefix, available),
+                                 "kind": "dataset"},
                     )
                 alias = prefix
                 role_edge_id = None
@@ -612,7 +784,9 @@ class Resolver:
             if f.metric not in known_metrics:
                 raise UnknownEntityError(
                     f"HAVING filter references metric '{f.metric}' "
-                    f"which is not in the request"
+                    f"which is not in the request",
+                    details={"suggestions": sorted(known_metrics),
+                             "kind": "metric_in_having"},
                 )
             having_out.append(ResolvedFilter(
                 kind="HAVING",

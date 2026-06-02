@@ -101,7 +101,7 @@ def test_describe_returns_structured_attrs(client_fake):
 
 def test_describe_404_when_empty(client_fake, monkeypatch):
     # Force the describe recipe to return nothing by swapping in an empty pool.
-    from tests.conftest import FakePool
+    from conftest import FakePool
     from semantic_catalog import db
     monkeypatch.setattr(db, "_pool_singleton", FakePool([]))
     r = client_fake.get("/api/describe", params={
@@ -112,7 +112,7 @@ def test_describe_404_when_empty(client_fake, monkeypatch):
 
 def test_graph_structure(client_fake, monkeypatch):
     """Build a graph from recipes that cover DATASET / METRIC / RELATIONSHIP / VIEW."""
-    from tests.conftest import FakePool
+    from conftest import FakePool
     from semantic_catalog import db
 
     recipes = [
@@ -156,7 +156,7 @@ def test_graph_structure(client_fake, monkeypatch):
 
 
 def test_tree_endpoint(client_fake, monkeypatch):
-    from tests.conftest import FakePool
+    from conftest import FakePool
     from semantic_catalog import db
 
     recipes = [
@@ -188,6 +188,87 @@ def test_tree_endpoint(client_fake, monkeypatch):
     assert body["metrics"][0]["name"] == "revenue"
 
 
+def test_describe_dataset_includes_relationships(client_fake, monkeypatch):
+    """REST /api/describe must surface relationships[] for DATASET entities
+    so the GUI can render edge hints alongside the attribute list.
+    """
+    from conftest import FakePool
+    from semantic_catalog import db
+
+    recipes = [
+        # m_semantic_describe → flat attribute pack
+        (
+            "exec demo_user.m_semantic_describe",
+            ["attr_ordinal", "attr_key", "attr_value"],
+            [(1, "name", "part"), (2, "type", "DIM")],
+        ),
+        # _load_dataset_relationships joins RELATIONSHIP twice to DATASET
+        (
+            "from demo_user.dataset d",
+            ["relationship_id", "relationship_name", "role_name",
+             "cardinality", "direction", "other_dataset"],
+            [
+                (101, "lineitem_to_part", None, "MANY_TO_ONE",
+                 "incoming", "lineitem"),
+                (102, "partsupp_to_part", None, "MANY_TO_ONE",
+                 "incoming", "partsupp"),
+            ],
+        ),
+    ]
+    monkeypatch.setattr(db, "_pool_singleton", FakePool(recipes))
+    r = client_fake.get("/api/describe", params={
+        "entity_type": "DATASET", "entity_name": "part",
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    rels = body["relationships"]
+    assert rels is not None and len(rels) == 2
+    prefixes = {h["prefix"] for h in rels}
+    assert prefixes == {"lineitem_to_part", "partsupp_to_part"}
+    assert all(h["direction"] == "incoming" for h in rels)
+    assert all(h["cardinality"] == "MANY_TO_ONE" for h in rels)
+
+
+def test_describe_metric_has_no_relationships(client_fake):
+    """METRIC describes don't trigger the relationship enrichment."""
+    r = client_fake.get("/api/describe", params={
+        "entity_type": "METRIC", "entity_name": "revenue",
+    })
+    assert r.status_code == 200
+    assert r.json()["relationships"] is None
+
+
+def test_compile_unknown_model_validation_message(client_fake, monkeypatch):
+    """REST /api/query/compile surfaces UNKNOWN_MODEL via validation_message
+    when the model isn't in the catalog. The wire format keeps the
+    structured details server-side, but the agent-readable error code +
+    message must reach the caller.
+    """
+    from conftest import FakePool
+    from semantic_catalog import db
+
+    recipes = [
+        # services.run_query: catalog.resolve_model_id returns nothing
+        ("from demo_user.semantic_model where model_name",
+         ["model_id"], []),
+        # resolver: list_model_names enumeration for suggestions
+        ("from demo_user.semantic_model",
+         ["model_name"], [("tpch_orders",), ("tpcds_retail",)]),
+    ]
+    monkeypatch.setattr(db, "_pool_singleton", FakePool(recipes))
+
+    r = client_fake.post("/api/query/compile", json={
+        "model": "tpch_order",  # near-miss spelling
+        "metrics": ["revenue"],
+        "dimensions": [],
+    })
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["is_valid"] == 0
+    assert body["compiled_sql"] is None
+    assert "UNKNOWN_MODEL" in (body["validation_message"] or "")
+
+
 def test_compile_returns_graceful_error_when_catalog_raises(client_fake, monkeypatch):
     """Regression: an unexpected exception in the DB catalog layer must
     not become a bare HTTP 500. The compile endpoint should return 200
@@ -195,7 +276,7 @@ def test_compile_returns_graceful_error_when_catalog_raises(client_fake, monkeyp
     GUI / agent can surface the failure reason instead of a naked
     'Internal Server Error'.
     """
-    from tests.conftest import FakeCursor, FakePool
+    from conftest import FakeCursor, FakePool
     from semantic_catalog import db
 
     class ExplodingCursor(FakeCursor):

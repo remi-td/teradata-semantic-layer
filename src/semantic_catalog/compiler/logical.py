@@ -23,6 +23,13 @@ class DatasetRef:
     # Alias used in FROM / JOIN. Equal to ``dataset_name`` in the common
     # case; differs when a role-played relationship pins an alias.
     alias: str = ""
+    # When set, the BFS may only enter this node via this relationship.
+    role_edge_id: Optional[int] = None
+    # When set, the BFS may only enter this node from the in-plan node
+    # whose alias matches this string.  Used for transitively-reached
+    # datasets (e.g. ``supplier_nation_region`` may only be joined from
+    # ``supplier_nation``, not from ``customer_nation``).
+    entry_from_alias: Optional[str] = None
 
     def __post_init__(self) -> None:
         if not self.alias:

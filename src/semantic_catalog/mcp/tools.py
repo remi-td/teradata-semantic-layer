@@ -46,6 +46,11 @@ def semantic_describe(
         "entity_name": result.entity_name,
         "model_name": result.model_name,
         "attributes": [asdict(a) for a in result.attributes],
+        "relationships": (
+            [asdict(h) for h in result.relationships]
+            if result.relationships is not None
+            else None
+        ),
     }
 
 

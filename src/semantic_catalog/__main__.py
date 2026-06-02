@@ -112,6 +112,7 @@ def _cmd_deploy(args: argparse.Namespace) -> int:
             print(f"   FAILED: {e}", file=sys.stderr)
             if args.stop_on_error:
                 break
+    conn.commit()
     cur.close()
     conn.close()
     if failures:
@@ -310,6 +311,7 @@ def _cmd_install(args: argparse.Namespace) -> int:
     import teradatasql
     from .config import load_settings
     settings = load_settings()
+    print(f"[install] target database: {settings.catalog_db}")
     sql_dir = Path(_default_sql_dir()).resolve()
     if not sql_dir.is_dir():
         print(f"[error] sql directory not found: {sql_dir}", file=sys.stderr)
@@ -361,10 +363,18 @@ def _cmd_install(args: argparse.Namespace) -> int:
                   f"{ex_dir} — skipping", file=sys.stderr)
         else:
             print(f"[install] --with-sample: deploying example '{sample}'")
-            files = sorted(p for p in ex_dir.glob("*.sql")
-                           if p.is_file() and p.name != "teardown.sql")
+            teardown = ex_dir / "teardown.sql"
+            if teardown.is_file():
+                print(f"=> {sample}/teardown.sql (cleanup)")
+                text = _render_sql(teardown.read_text(), settings.catalog_db)
+                _submit_sql_file(cur, text, mode="split-tolerant")
+                print("   ok")
+            data_files = sorted(p for p in ex_dir.glob("*.sql")
+                                if p.is_file() and p.name not in (
+                                    "teardown.sql", "42_retarget_catalog.sql"))
+            retarget = ex_dir / "42_retarget_catalog.sql"
             sample_failed = False
-            for f in files:
+            for f in data_files:
                 text = _render_sql(f.read_text(), settings.catalog_db)
                 mode = _detect_mode(text)
                 print(f"=> {sample}/{f.name} ({mode})")
@@ -377,8 +387,19 @@ def _cmd_install(args: argparse.Namespace) -> int:
                     print(f"   FAILED: {e}", file=sys.stderr)
                     if args.stop_on_error:
                         break
+            if retarget.is_file() and not sample_failed:
+                print(f"=> {sample}/42_retarget_catalog.sql (split)")
+                try:
+                    text = _render_sql(retarget.read_text(), settings.catalog_db)
+                    _submit_sql_file(cur, text, mode="split")
+                    print("   ok")
+                except Exception as e:  # noqa: BLE001
+                    failures += 1
+                    sample_failed = True
+                    print(f"   FAILED: {e}", file=sys.stderr)
             sample_deployed = not sample_failed
 
+    conn.commit()
     cur.close()
     conn.close()
     if failures:
@@ -386,6 +407,12 @@ def _cmd_install(args: argparse.Namespace) -> int:
         return 1
     print("[install] core catalog deployed"
           + (f" (+ sample: {sample})" if sample_deployed else ""))
+    if sample_deployed and sample:
+        ex_dir = _examples_dir() / sample
+        if (ex_dir / "42_retarget_catalog.sql").is_file():
+            print(f"[install] note: sample dataset physical references point to "
+                  f"'{settings.catalog_db}.*'. Catalog browsing and SQL compilation work "
+                  f"without those tables; executing compiled queries requires them to exist.")
     return 0
 
 
@@ -413,20 +440,32 @@ def _cmd_install_example(args: argparse.Namespace) -> int:
     import teradatasql
     from .config import load_settings
     settings = load_settings()
+    print(f"[install-example] target database: {settings.catalog_db}")
     ex_dir = _examples_dir() / args.name
     if not ex_dir.is_dir():
         print(f"[error] unknown example: {args.name} (looked in {ex_dir})", file=sys.stderr)
         return 2
-    files = sorted(p for p in ex_dir.glob("*.sql")
-                   if p.is_file() and p.name != "teardown.sql")
-    if not files:
+    # data files run first; retarget runs last (after data is present)
+    data_files = sorted(p for p in ex_dir.glob("*.sql")
+                        if p.is_file() and p.name not in (
+                            "teardown.sql", "42_retarget_catalog.sql"))
+    retarget = ex_dir / "42_retarget_catalog.sql"
+    if not data_files and not retarget.is_file():
         print(f"[info] no installable .sql files in {ex_dir}")
         return 0
 
     conn = teradatasql.connect(**settings.driver_kwargs())
     cur = conn.cursor()
+
+    teardown = ex_dir / "teardown.sql"
+    if teardown.is_file():
+        print(f"=> {args.name}/teardown.sql (cleanup)")
+        text = _render_sql(teardown.read_text(), settings.catalog_db)
+        _submit_sql_file(cur, text, mode="split-tolerant")
+        print("   ok")
+
     failures = 0
-    for f in files:
+    for f in data_files:
         text = _render_sql(f.read_text(), settings.catalog_db)
         mode = _detect_mode(text)
         print(f"=> {args.name}/{f.name} ({mode})")
@@ -438,12 +477,28 @@ def _cmd_install_example(args: argparse.Namespace) -> int:
             print(f"   FAILED: {e}", file=sys.stderr)
             if args.stop_on_error:
                 break
+
+    if retarget.is_file() and not failures:
+        print(f"=> {args.name}/42_retarget_catalog.sql (split)")
+        try:
+            text = _render_sql(retarget.read_text(), settings.catalog_db)
+            _submit_sql_file(cur, text, mode="split")
+            print("   ok")
+        except Exception as e:  # noqa: BLE001
+            failures += 1
+            print(f"   FAILED: {e}", file=sys.stderr)
+
+    conn.commit()
     cur.close()
     conn.close()
     if failures:
         print(f"[install-example] {failures} failure(s)", file=sys.stderr)
         return 1
     print(f"[install-example] {args.name} installed")
+    if retarget.is_file():
+        print(f"[install-example] note: sample dataset physical references point to "
+              f"'{settings.catalog_db}.*'. Catalog browsing and SQL compilation work "
+              f"without those tables; executing compiled queries requires them to exist.")
     return 0
 
 

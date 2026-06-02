@@ -46,11 +46,30 @@ class DescribeAttr:
 
 
 @dataclass
+class RelationshipHint:
+    """One edge surfaced on a DATASET describe.
+
+    ``prefix`` is the disambiguation token a caller prepends to a field
+    name in a compile request (``prefix.field_name``). It is the
+    relationship's ``role_name`` when set, otherwise its
+    ``relationship_name`` — both forms are accepted by the parser.
+    """
+    prefix: str
+    direction: str           # 'incoming' | 'outgoing'
+    other_dataset: str
+    cardinality: Optional[str]
+    role_name: Optional[str]
+    relationship_name: Optional[str]
+    relationship_id: int
+
+
+@dataclass
 class DescribeResult:
     entity_type: str
     entity_name: str
     model_name: Optional[str]
     attributes: List[DescribeAttr]
+    relationships: Optional[List[RelationshipHint]] = None
 
 
 @dataclass
@@ -144,28 +163,95 @@ def describe_entity(
     if not entity_type or not entity_name:
         raise ValueError("entity_type and entity_name are required")
     db = _db_name()
+    et = entity_type.upper()
     with get_pool().cursor() as cur:
         cur.execute(
             f"EXEC {db}.m_semantic_describe(?, ?, ?)",
-            (entity_type.upper(), entity_name, model),
+            (et, entity_name, model),
         )
         rows = cur.fetchall() or []
-    attrs = [
-        DescribeAttr(
-            attr_ordinal=int(r[0]),
-            attr_key=str(r[1]).strip(),
-            attr_value=(str(r[2]) if r[2] is not None else ""),
-        )
-        for r in rows
-    ]
-    if not attrs:
-        raise EntityNotFound(f"Unknown {entity_type} '{entity_name}'")
+        attrs = [
+            DescribeAttr(
+                attr_ordinal=int(r[0]),
+                attr_key=str(r[1]).strip(),
+                attr_value=(str(r[2]) if r[2] is not None else ""),
+            )
+            for r in rows
+        ]
+        if not attrs:
+            raise EntityNotFound(f"Unknown {entity_type} '{entity_name}'")
+        # For DATASETs, surface every relationship as a structured edge so
+        # callers can pick a disambiguation prefix without parsing the
+        # macro's text output. Failures here are non-fatal — the textual
+        # attributes are still returned.
+        relationships: Optional[List[RelationshipHint]] = None
+        if et == "DATASET":
+            try:
+                relationships = _load_dataset_relationships(
+                    cur, db, entity_name=entity_name, model=model,
+                )
+            except Exception:  # noqa: BLE001
+                log.exception("describe: relationship enrichment failed")
+                relationships = None
     return DescribeResult(
-        entity_type=entity_type.upper(),
+        entity_type=et,
         entity_name=entity_name,
         model_name=model,
         attributes=attrs,
+        relationships=relationships,
     )
+
+
+def _load_dataset_relationships(
+    cur: Any, db: str, *, entity_name: str, model: Optional[str],
+) -> List[RelationshipHint]:
+    """Return every edge incident to ``entity_name`` as a structured list.
+
+    Joins RELATIONSHIP twice to the DATASET table to look up the dataset
+    name on each side, then computes ``prefix`` (role_name OR
+    relationship_name) and ``direction`` relative to ``entity_name``.
+    """
+    cur.execute(
+        f"""SELECT r.relationship_id,
+                   r.relationship_name,
+                   r.role_name,
+                   r.cardinality,
+                   CASE WHEN r.from_dataset_id = d.dataset_id
+                        THEN 'outgoing' ELSE 'incoming' END,
+                   CASE WHEN r.from_dataset_id = d.dataset_id
+                        THEN to_d.dataset_name
+                        ELSE from_d.dataset_name END
+              FROM {db}.DATASET d
+              JOIN {db}.SEMANTIC_MODEL sm ON sm.model_id = d.model_id
+              JOIN {db}.RELATIONSHIP  r
+                ON r.from_dataset_id = d.dataset_id
+                OR r.to_dataset_id   = d.dataset_id
+              JOIN {db}.DATASET from_d ON from_d.dataset_id = r.from_dataset_id
+              JOIN {db}.DATASET to_d   ON to_d.dataset_id   = r.to_dataset_id
+             WHERE d.dataset_name = ?
+               AND (? IS NULL OR sm.model_name = ?)
+             ORDER BY 5, 6""",
+        (entity_name, model, model),
+    )
+    out: List[RelationshipHint] = []
+    for r in cur.fetchall() or []:
+        rel_id = int(r[0])
+        rel_name = (str(r[1]).strip() if r[1] is not None else None)
+        role_name = (str(r[2]).strip() if r[2] is not None else None)
+        cardinality = (str(r[3]).strip() if r[3] is not None else None)
+        direction = str(r[4]).strip()
+        other = str(r[5]).strip()
+        prefix = role_name or rel_name or str(rel_id)
+        out.append(RelationshipHint(
+            prefix=prefix,
+            direction=direction,
+            other_dataset=other,
+            cardinality=cardinality,
+            role_name=role_name,
+            relationship_name=rel_name,
+            relationship_id=rel_id,
+        ))
+    return out
 
 
 # --- compile / execute -----------------------------------------------------
@@ -303,6 +389,7 @@ __all__ = [
     "SearchHit",
     "DescribeAttr",
     "DescribeResult",
+    "RelationshipHint",
     "ExecutionPayload",
     "QueryResult",
     "search_catalog",

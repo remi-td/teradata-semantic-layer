@@ -312,3 +312,75 @@ def test_compile_then_render_filtered_metric_builds_case_when() -> None:
     assert "INNER JOIN demo_user.gb_student AS student" in sql
     assert "INNER JOIN demo_user.gb_assessment_type AS assessment_type" in sql
     assert "GROUP BY student.major" in sql
+
+
+# -------- transitive role join tests ----------------------------------------
+
+def _tpch_nation_region_catalog() -> tuple[InMemoryCatalog, dict]:
+    """customer→nation (role_name=customer_nation) + nation→region (no role)."""
+    from semantic_catalog.compiler import InMemoryCatalog
+    cat = InMemoryCatalog()
+    mid = cat.add_model("tpch_orders")
+    orders   = cat.add_dataset(mid, "orders",   database="tpch", table="orders")
+    customer = cat.add_dataset(mid, "customer", database="tpch", table="customer")
+    nation   = cat.add_dataset(mid, "nation",   database="tpch", table="nation")
+    region   = cat.add_dataset(mid, "region",   database="tpch", table="region")
+
+    o_orderkey  = cat.add_field(orders,   "o_orderkey")
+    o_custkey   = cat.add_field(orders,   "o_custkey")
+    c_custkey   = cat.add_field(customer, "c_custkey")
+    c_nationkey = cat.add_field(customer, "c_nationkey")
+    n_nationkey = cat.add_field(nation,   "n_nationkey")
+    n_regionkey = cat.add_field(nation,   "n_regionkey")
+    r_regionkey = cat.add_field(region,   "r_regionkey")
+    r_name      = cat.add_field(region,   "r_name")
+
+    count_orders = cat.add_metric(
+        mid, "count_orders",
+        expression="COUNT(DISTINCT orders.o_orderkey)",
+        primary_dataset_id=orders.dataset_id,
+        field_refs=[o_orderkey.field_id],
+    )
+    cat.add_relationship(mid, name="orders_to_customer",
+        from_ds=orders, to_ds=customer, cardinality="MANY_TO_ONE",
+        columns=[(o_custkey, c_custkey)])
+    cat.add_relationship(mid, name="customer_to_nation",
+        from_ds=customer, to_ds=nation, cardinality="MANY_TO_ONE",
+        role_name="customer_nation",
+        columns=[(c_nationkey, n_nationkey)])
+    cat.add_relationship(mid, name="nation_to_region",
+        from_ds=nation, to_ds=region, cardinality="MANY_TO_ONE",
+        columns=[(n_regionkey, r_regionkey)])
+
+    return cat, {"mid": mid, "orders": orders, "count_orders": count_orders}
+
+
+def test_transitive_role_join_resolves_region() -> None:
+    """customer_nation.r_name must produce a join chain orders→customer→nation→region."""
+    cat, _ = _tpch_nation_region_catalog()
+    plan = compile(
+        QueryRequest(model="tpch_orders", metrics=["count_orders"],
+                     dimensions=["customer_nation.r_name"]),
+        cat,
+    )
+    assert plan.unresolved == []
+    sql = render(plan, pretty=False)
+    assert "AS customer_nation" in sql
+    assert "AS customer_nation_region" in sql
+    assert "customer_nation.n_regionkey = customer_nation_region.r_regionkey" in sql
+    assert "customer_nation_r_name" in sql
+
+
+def test_transitive_role_join_nation_is_aliased() -> None:
+    """nation must appear with the role alias, not its plain name."""
+    cat, _ = _tpch_nation_region_catalog()
+    plan = compile(
+        QueryRequest(model="tpch_orders", metrics=["count_orders"],
+                     dimensions=["customer_nation.r_name"]),
+        cat,
+    )
+    sql = render(plan, pretty=False)
+    assert "AS nation" not in sql
+    assert "AS region" not in sql           # scoped alias, not plain
+    assert "AS customer_nation" in sql
+    assert "AS customer_nation_region" in sql

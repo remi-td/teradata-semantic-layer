@@ -50,6 +50,12 @@ class DbCatalog:
         )
         return int(r[0]) if r else None
 
+    def list_model_names(self) -> List[str]:
+        rows = self._fetchall(
+            f"SELECT model_name FROM {self.db}.SEMANTIC_MODEL ORDER BY model_name"
+        )
+        return [str(r[0]).strip() for r in rows if r and r[0] is not None]
+
     # --- datasets ---
 
     def load_datasets(self, model_id: int) -> List[DatasetRef]:
@@ -139,6 +145,24 @@ class DbCatalog:
             is_time_dimension=bool(r[4]),
         )
 
+    def list_field_tokens(self, model_id: int) -> List[str]:
+        rows = self._fetchall(
+            f"""SELECT d.dataset_name, f.field_name
+                  FROM {self.db}.FIELD f
+                  JOIN {self.db}.DATASET d ON d.dataset_id = f.dataset_id
+                 WHERE d.model_id = ?
+                 ORDER BY d.dataset_name, f.field_name""",
+            model_id,
+        )
+        out: List[str] = []
+        for r in rows:
+            if r and r[0] is not None and r[1] is not None:
+                ds = str(r[0]).strip()
+                fn = str(r[1]).strip()
+                out.append(fn)
+                out.append(f"{ds}.{fn}")
+        return out
+
     def load_metric_field_refs(self, metric_id: int) -> List[int]:
         rows = self._fetchall(
             f"SELECT field_id FROM {self.db}.METRIC_FIELD_REF WHERE metric_id = ?",
@@ -147,6 +171,14 @@ class DbCatalog:
         return [int(r[0]) for r in rows]
 
     # --- metrics ---
+
+    def list_metric_names(self, model_id: int) -> List[str]:
+        rows = self._fetchall(
+            f"""SELECT metric_name FROM {self.db}.METRIC
+                 WHERE model_id = ? ORDER BY metric_name""",
+            model_id,
+        )
+        return [str(r[0]).strip() for r in rows if r and r[0] is not None]
 
     def find_metric(self, model_id: int, metric_name: str) -> Optional[MetricRow]:
         r = self._fetchone(

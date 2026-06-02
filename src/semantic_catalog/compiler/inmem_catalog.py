@@ -48,6 +48,9 @@ class InMemoryCatalog:
     def resolve_model_id(self, model_name: str) -> Optional[int]:
         return self.models.get(model_name)
 
+    def list_model_names(self) -> List[str]:
+        return sorted(self.models.keys())
+
     def load_datasets(self, model_id: int) -> List[DatasetRef]:
         return [self.datasets[did] for did in self.datasets_by_model.get(model_id, [])]
 
@@ -70,11 +73,25 @@ class InMemoryCatalog:
                               field_name: str) -> Optional[FieldRef]:
         return self.fields.get((dataset_id, field_name))
 
+    def list_field_tokens(self, model_id: int) -> List[str]:
+        out: List[str] = []
+        for did in self.datasets_by_model.get(model_id, []):
+            ds = self.datasets[did]
+            for (d_id, fname), _f in self.fields.items():
+                if d_id != did:
+                    continue
+                out.append(fname)
+                out.append(f"{ds.dataset_name}.{fname}")
+        return sorted(set(out))
+
     def load_metric_field_refs(self, metric_id: int) -> List[int]:
         return list(self.metric_field_refs.get(metric_id, []))
 
     def find_metric(self, model_id: int, metric_name: str) -> Optional[MetricRow]:
         return self.metrics.get((model_id, metric_name))
+
+    def list_metric_names(self, model_id: int) -> List[str]:
+        return sorted(name for (mid, name) in self.metrics.keys() if mid == model_id)
 
     def load_metric_filters(self, metric_id: int) -> List[MetricFilterRow]:
         return list(self.metric_filters.get(metric_id, []))
@@ -84,8 +101,13 @@ class InMemoryCatalog:
 
     def find_relationship_by_role(self, model_id: int,
                                   role_name: str) -> Optional[RelationshipRow]:
+        # role_name takes precedence; fall back to relationship_name when
+        # role_name is unset (matches DbCatalog parity).
         for r in self.relationships_by_model.get(model_id, []):
             if r.role_name == role_name:
+                return r
+        for r in self.relationships_by_model.get(model_id, []):
+            if r.role_name is None and r.relationship_name == role_name:
                 return r
         return None
 

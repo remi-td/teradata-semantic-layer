@@ -161,34 +161,127 @@ The compiler ANDs them and auto-joins both filter datasets. See
 
 ## Pattern C — Role-played dimensions
 
-**Use when:** two relationships exist between the same pair of datasets
-with different semantic meaning — e.g. `orders.o_custkey → customer`
-(the buyer) and `orders.o_billing_custkey → customer` (the billed
-party). Without a role, an agent asking for `customer.c_mktsegment`
-cannot know which edge to take.
+**Use when:** two or more relationships connect the same pair of datasets
+with different semantic meaning — e.g. `orders.o_custkey → customer` (the
+buyer) and `orders.o_billing_custkey → customer` (the billed party). Without
+a role, an agent asking for `customer.c_mktsegment` cannot know which edge
+to take.
 
-**Definition:** set `role_name` on `RELATIONSHIP`. A unique index
-enforces one role per (from, to, role).
+### C.1 — Direct role-played dim
+
+**Definition:** set `role_name` on each `RELATIONSHIP`. A unique index
+enforces one role per (from_dataset, to_dataset, role_name) triplet.
 
 ```sql
-INSERT INTO RELATIONSHIP (..., relationship_name, role_name, ...)
-VALUES (..., 'orders_placed_by_customer', 'placed_by', ...);
+INSERT INTO RELATIONSHIP (..., relationship_name, role_name)
+VALUES (..., 'orders_placed_by_customer', 'placed_by');
 
-INSERT INTO RELATIONSHIP (..., relationship_name, role_name, ...)
-VALUES (..., 'orders_billed_to_customer', 'billed_to', ...);
+INSERT INTO RELATIONSHIP (..., relationship_name, role_name)
+VALUES (..., 'orders_billed_to_customer', 'billed_to');
 ```
 
-**Query syntax:** caller prefixes the dim with the role name instead
-of the dataset name: `placed_by.c_mktsegment` vs `billed_to.c_mktsegment`.
+**Query token:** prefix the dim with the role name instead of the dataset
+name.
+
+```json
+{
+  "model": "tpch_orders",
+  "metrics": ["revenue"],
+  "dimensions": ["placed_by.c_mktsegment", "billed_to.c_mktsegment"]
+}
+```
+
+The compiler aliases the physical table to the role name in SQL
+(`demo_user.customer AS placed_by` and `demo_user.customer AS billed_to`)
+and joins each via its pinned edge.
 
 **Ambiguity detection:** if a caller names a dim on a dataset that has
-multiple incoming relationships (none pinned by role), the compiler
-fails with an explicit `AMBIGUOUS_PATH` error listing the available
-roles. No silent "pick the first edge" behavior.
+multiple incoming relationships but supplies no role prefix, the compiler
+rejects with an explicit `AMBIGUOUS_PATH` error that lists the available
+role names. There is no "pick the first edge" fallback.
 
-See `examples/tpch_orders/11_scenario_tpch_orders.sql` for a full
-working example, and `tests/cases/05_role_playing.yaml` for regression
-cases.
+### C.2 — Transitive role resolution
+
+**Use when:** you want a field from a dataset that is downstream (via a
+further relationship) of a role-played dataset. The role prefix extends
+transitively through the outgoing relationship chain.
+
+**Example:** in the TPC-H model, `nation → region` via `nation_to_region`.
+Both `customer` and `supplier` reach nation through role-played edges
+(`customer_nation` and `supplier_nation`). To get the region name on the
+customer path, write:
+
+```json
+{
+  "metrics": ["revenue"],
+  "dimensions": ["customer_nation.r_name"]
+}
+```
+
+The compiler:
+1. Resolves `customer_nation` → `nation` dataset via `customer_to_nation`.
+2. Finds that `r_name` is not on `nation`; walks outgoing edges from `nation`.
+3. Finds `r_name` on `region` via `nation_to_region`.
+4. Emits two joins: `nation AS customer_nation` then `region AS customer_nation_region`.
+5. Selects `customer_nation_region.r_name AS customer_nation_r_name`.
+
+The transitive alias for the downstream dataset is always
+`{role_prefix}_{dataset_name}` (e.g. `customer_nation_region`). This keeps
+the origin role visible in both the SQL alias and the output column name.
+
+### C.3 — Dual transitive paths to the same dataset
+
+When both role prefixes appear in the same query, the compiler creates
+**independent scoped aliases** and separate join chains:
+
+```json
+{
+  "metrics": ["avg_qty"],
+  "dimensions": ["supplier_nation.r_name", "customer_nation.r_name"]
+}
+```
+
+Compiles to:
+
+```sql
+SELECT
+  supplier_nation_region.r_name AS supplier_nation_r_name,
+  customer_nation_region.r_name AS customer_nation_r_name,
+  AVG(lineitem.l_quantity) AS avg_qty
+FROM demo_user.lineitem AS lineitem
+INNER JOIN demo_user.supplier AS supplier
+  ON lineitem.l_suppkey = supplier.s_suppkey
+INNER JOIN demo_user.nation AS supplier_nation
+  ON supplier.s_nationkey = supplier_nation.n_nationkey
+INNER JOIN demo_user.region AS supplier_nation_region
+  ON supplier_nation.n_regionkey = supplier_nation_region.r_regionkey
+INNER JOIN demo_user.orders AS orders
+  ON lineitem.l_orderkey = orders.o_orderkey
+INNER JOIN demo_user.customer AS customer
+  ON orders.o_custkey = customer.c_custkey
+INNER JOIN demo_user.nation AS customer_nation
+  ON customer.c_nationkey = customer_nation.n_nationkey
+INNER JOIN demo_user.region AS customer_nation_region
+  ON customer_nation.n_regionkey = customer_nation_region.r_regionkey
+GROUP BY supplier_nation_region.r_name, customer_nation_region.r_name
+```
+
+Each scoped alias (`supplier_nation_region`, `customer_nation_region`) can
+only be entered from its designated intermediate (`supplier_nation` and
+`customer_nation` respectively). The BFS enforces this: a role-pinned node
+may expand forward freely but cannot be traversed backward via a different
+edge, so `supplier_nation` can never accidentally serve as the source for
+the customer path.
+
+**Rule of thumb:** any field on any dataset reachable from a role-played
+node can be addressed with the `{role_prefix}.{field_name}` syntax,
+regardless of how many hops away it is. If the field is ambiguous (exists
+on multiple downstream datasets), the compiler raises an error listing the
+candidate paths.
+
+See `examples/tpch_orders/11_scenario_tpch_orders.sql` for the full working
+definition, and `tests/test_compiler_resolver.py` + `tests/test_compiler_joins.py`
+for regression cases covering all three sub-patterns.
 
 ---
 
@@ -407,11 +500,6 @@ Documented here so they don't surprise a future reader:
   stored-procedure compilation logic. Revisit when the compiler moves
   to Python. Import-time expansion remains possible as a lighter
   alternative.
-
-- **Cypher-style multi-hop role prefixes** (`orders.placed_by.customer.
-  nation.name`). Current syntax handles single-role dot prefixes;
-  deep paths require the caller to break the request into intermediate
-  dims.
 
 - **Metric-level security / row-level filters** not tied to the
   `WHERE` filter in the request shape. The `SECURITY_POLICY` table

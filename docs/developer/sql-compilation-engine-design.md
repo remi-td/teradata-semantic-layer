@@ -11,156 +11,193 @@ The catalog in `semantic-catalog-design.md` defines **what** a semantic
 model looks like. This document defines **how** the catalog turns an
 agent's intent into a concrete, validated Teradata SQL query.
 
-The engine is implemented as a Teradata stored procedure,
-`demo_user.sp_semantic_request`, that reads the catalog's own tables.
-There is no external runtime: *the catalog is the engine.*
+The engine is the Python package `semantic_catalog.compiler`, embedded
+in the same FastAPI process as the REST and MCP servers. It reads the
+catalog via `SELECT` queries (no writes, no staging tables) and returns
+a `LogicalPlan` that the renderer turns into a SQL string. The only
+Teradata writes are the final `EXPLAIN` validation call and, when the
+caller requests execution, the compiled query itself.
 
 ---
 
 ## 1. Architecture overview
 
-`sp_semantic_request` is a single-pass compiler structured as a linear
-pipeline. Each stage reads from catalog tables (or staging tables populated
-by earlier stages) and writes to the next stage's input.
+The compiler is a pure-Python, stateless pipeline. All intermediate state
+lives in Python objects; the database is never written to during
+compilation.
 
 ```
-┌──────────────────────┐
-│ 0. Reset staging     │  DELETE FROM request_*  (single-user sandbox;
-│                      │   add SESSION_ID column for multi-tenant)
+CompileRequest (Python dataclass)
+        │
+        ▼
+┌──────────────────────┐   DB reads (SELECT only)
+│   resolver.py        │◀─ SEMANTIC_MODEL, METRIC, METRIC_EXPRESSION,
+│   Resolver.resolve() │   METRIC_FIELD_REF, METRIC_FILTER,
+│                      │   FIELD, DATASET, RELATIONSHIP
+│   · resolve model    │
+│   · resolve metrics  │   → MetricRef list (composed SQL expressions)
+│   · resolve dims     │   → ResolvedDim list (field + alias + constraints)
+│   · resolve filters  │   → ResolvedFilter list (WHERE / HAVING)
+│   · pick anchor      │   → DatasetRef (fact table heuristic)
+│   · build required   │   → _RequiredIndex (datasets to join)
 └──────────┬───────────┘
+           │  LogicalPlan (in-memory; join_steps not yet populated)
            ▼
-┌──────────────────────┐   catalog input
-│ 1. Resolve model     │◀──── SEMANTIC_MODEL
+┌──────────────────────┐   DB reads (SELECT only)
+│   joins.py           │◀─ RELATIONSHIP, REL_COLUMN_MAP
+│   JoinResolver       │
+│   .resolve(plan)     │   BFS expansion + bridging
+│                      │   → plan.join_steps (pre-rendered SQL fragments)
+│                      │   → plan.unresolved  (datasets with no path)
 └──────────┬───────────┘
-           ▼
-┌──────────────────────┐   catalog input
-│ 2. Resolve metrics   │◀──── METRIC, METRIC_EXPRESSION,
-│    → request_metric  │      METRIC_FIELD_REF
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐   catalog input
-│ 3. Resolve dims      │◀──── FIELD, DATASET
-│    → request_dim     │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 4. Pick anchor       │   heuristic: primary_dataset of first metric,
-│                      │   else dataset with most outbound rels
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐   catalog input
-│ 5. BFS join search   │◀──── RELATIONSHIP, REL_COLUMN_MAP
-│    → request_join_step
-└──────────┬───────────┘
+           │  LogicalPlan (complete)
            ▼
 ┌──────────────────────┐
-│ 6. Unreachable check │   mark request invalid if any required
-│                      │   dataset is not in plan
+│   render.py          │   pure Python + sqlglot (no DB I/O)
+│   render(plan)       │
+│                      │   → SQL string
+│                      │     LOCKING ROW FOR ACCESS
+│                      │     SELECT TOP N ... FROM ... JOIN ...
+│                      │     WHERE ... GROUP BY ... HAVING ... ORDER BY
 └──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 7. Emit SELECT list  │   dims + metric expressions
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 8. Emit FROM + JOINs │   concatenate request_join_step rows
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 9. Emit WHERE        │   pre-aggregation filters (field-based)
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 10. Emit GROUP BY    │   all dim expressions
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 11. Emit HAVING      │   metric-valued filters (substitute alias
-│                      │   with metric expression)
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 12. Emit ORDER BY    │
-│     + TOP N          │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 13. Assemble v_sql   │
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 14. Validate EXPLAIN │   CALL DBC.SysExecSQL('EXPLAIN ' || v_sql)
-│                      │   capture failure without aborting the proc
-└──────────┬───────────┘
-           ▼
-┌──────────────────────┐
-│ 15. Persist result   │   INSERT INTO request_result
-└──────────────────────┘
+           │
+    ┌──────┴──────────────────────────────────────┐
+    ▼                                             ▼
+/api/query/compile                     /api/query/execute
+return SQL + metadata                  run EXPLAIN → run query → return rows
+(no DB writes)                         (one EXPLAIN SELECT, one data SELECT)
 ```
 
-Every stage runs in a single RDBMS session. Intermediate state lives in
-`demo_user.request_*` staging tables so the compiler can inspect and
-retry without rebuilding from scratch.
+**DB I/O summary per compile call:**
+
+| Phase | Query count | What |
+|---|---|---|
+| Resolve model | 1 | `SELECT` on `SEMANTIC_MODEL` |
+| Resolve metrics | 1–3 per metric | `METRIC`, `METRIC_EXPRESSION`, `METRIC_FILTER` |
+| Resolve dims | 1–3 per dim | `FIELD`, `RELATIONSHIP` (role lookup), transitive walk |
+| Join planning | 1 | `RELATIONSHIP` + `REL_COLUMN_MAP` (one bulk load) |
+| Render | 0 | pure Python |
+| EXPLAIN (compile) | 1 | `EXPLAIN <sql>` via driver |
+| Execute (optional) | 1 | the compiled query |
+
+No staging tables. No session state. The process is safe to run in
+parallel across as many replicas as needed.
 
 ---
 
 ## 2. Join graph resolution
 
-The join graph lives in `RELATIONSHIP` (edges, directed from many→one) and
+The join graph lives in `RELATIONSHIP` (directed edges, many→one) and
 `REL_COLUMN_MAP` (per-edge column pairs). Nodes are `DATASET` rows.
+The Python BFS in `compiler/joins.py` (`JoinResolver`) populates
+`LogicalPlan.join_steps` in place after the resolver has populated
+`required_datasets`.
 
-### Algorithm: directed BFS
+### 2.1 Algorithm: BFS with bridging
 
-1. Collect **required** datasets — everything referenced by the requested
-   metrics and dimensions. Store in `request_required_ds`.
-2. Pick an **anchor**:
-   - `primary_dataset_id` of the first metric (when present), which
-     usually corresponds to the fact table.
-   - Fallback: the required dataset with the most outbound
-     many-to-one relationships (structural hint that it is a fact).
-3. Mark the anchor as `in_plan = 1` and emit it as the `FROM` clause.
-4. **BFS loop** (capped at 10 iterations):
-   - Among required datasets not yet `in_plan`, find one that has a
-     direct `RELATIONSHIP` (in either direction) to a dataset already in
-     plan. Prefer `MANY_TO_ONE` edges over `ONE_TO_MANY` (dimension
-     lookup semantics), and outbound edges over inbound edges.
-   - Emit an `INNER JOIN` using the column pairs from `REL_COLUMN_MAP`
-     (composite joins produced by `column_position`-ordered
-     concatenation).
-   - Mark in plan and repeat.
-5. When no progress can be made, leave the loop. Any still-out datasets
-   are reported as unreachable in `validation_message`, and
-   `is_valid = 0`.
+1. **Required set.** Collect every dataset referenced by the requested
+   metrics and dimensions. Store as `LogicalPlan.required_datasets`.
+2. **Anchor.** `primary_dataset_id` of the first metric (usually the fact
+   table) or the dataset with the most outbound MANY_TO_ONE relationships.
+   The anchor is marked `in_plan = True` and emitted as the FROM clause.
+3. **Expansion loop.** On each iteration, `_pick_candidate` finds the
+   best edge connecting an in-plan node to an out-of-plan required node:
+   - Prefer MANY_TO_ONE forward edges (fact → dim) over reverse edges.
+   - Deterministic tiebreaker on `(dataset_id, relationship_id)` for
+     reproducible output.
+   - Emit `INNER JOIN ... ON <REL_COLUMN_MAP pairs>` and mark in-plan.
+   - Repeat until no adjacent required node remains.
+4. **Bridging.** When expansion stalls but required datasets remain, add
+   one intermediate dataset that is frontier-adjacent and adjacent to at
+   least one out-of-plan required node. This handles multi-hop chains
+   (e.g. reaching `customer` via an `orders` bridge without `orders`
+   being explicitly requested). Capped at `MAX_BRIDGE_ITERATIONS = 10`.
+5. **Unresolved.** Any dataset still out-of-plan after all iterations
+   surfaces in `plan.unresolved` without crashing. The renderer signals
+   the incomplete plan to the caller.
 
-### Selective pruning
+### 2.2 Role-playing: single-hop
 
-The engine only joins datasets that are required. The full relationship
-graph is not traversed. This keeps compiled SQL minimal — an agent that
-requests `total_revenue` by `orders.o_orderyear` gets exactly two
-datasets (`lineitem`, `orders`), never the full `nation/region/part`
-fan-out.
+When two relationships share the same `(from_dataset, to_dataset)` pair
+with different `role_name` values, a plain `dataset.field` dim token is
+ambiguous. The resolver rejects it with `AmbiguousPathError` and lists
+the available roles.
 
-### How MetricFlow and Databricks MV compare
+To resolve, the caller prefixes the dim with the role name:
 
-- **MetricFlow** builds a full [`DataflowPlan`] DAG and classifies nodes
-  by entity type (`primary`, `foreign`, `natural`). Its join resolver
-  walks entity graphs the same way ours walks relationships, but it is
-  expressed in Python and emits dialect-specific SQL via a templating
-  layer.
-- **Databricks Metric Views** define per-view joins at creation time
-  (the `WITH JOINS` clause). The engine does not choose joins at query
-  time — the author baked them in. Ours chooses per request because the
-  catalog owns both the facts and the possible joins.
+```
+customer_nation.n_name   →  reach nation via customer_to_nation
+supplier_nation.n_name   →  reach nation via supplier_to_nation
+```
 
-### Known limitation (v1)
+During join planning, each role-played node is stored with a
+`role_edge_id` (the relationship_id it must be entered via). This is
+propagated from `DatasetRef.role_edge_id` into `_PlanNode.role_edge_id`
+in `_build_nodes`.
 
-The BFS only adds datasets that are *already in the required set*.
-Multi-hop traversal through non-required intermediaries is not
-automatic. For example, `total_revenue` by `region.r_name` would require
-the caller to include `customer` and `nation` as extra dimensions so
-that BFS can chain through them. A future version can add a 2nd phase
-that greedily pulls bridge datasets into the required set when the
-first BFS stalls.
+### 2.3 Role-playing: transitive resolution
+
+A role prefix extends transitively to datasets downstream of the
+role-played target. If `r_name` is not on `nation` (the direct role
+target) but is on `region` (reachable via `nation_to_region`), the token
+`customer_nation.r_name` still resolves:
+
+1. **Resolver walk** (`_walk_transitive_role`): BFS from `nation` over
+   outgoing relationships. Finds `r_name` on `region`. Returns:
+   - the field ref
+   - the final dataset (`region`)
+   - the intermediate chain: `[(nation, "customer_nation")]`
+   - the last relationship used (`nation_to_region`)
+   - the alias of the node immediately before `region` (`"customer_nation"`)
+
+2. **Required set additions:**
+   - `nation` added with `alias="customer_nation"` (intermediate)
+   - `region` added with `alias="customer_nation_region"`, plus two
+     constraints stored on `DatasetRef`:
+     - `role_edge_id = nation_to_region.relationship_id` — must enter
+       region via this specific relationship
+     - `entry_from_alias = "customer_nation"` — must be entered from that
+       specific alias, not from any other in-plan node
+
+3. **ResolvedDim:** `dataset_alias = "customer_nation_region"`,
+   `column_alias = "customer_nation_r_name"`.
+
+The transitive alias convention is always `{role_prefix}_{dataset_name}`.
+This makes the origin role visible in both the SQL and the output column.
+
+### 2.4 Edge-allowed constraints
+
+`_edge_allowed(r, in_node, out_node, *, reverse)` is the gating function
+called by `_pick_candidate` before accepting any edge. Three checks:
+
+| Check | Condition | Purpose |
+|---|---|---|
+| **out_node role** | `out_node.role_edge_id is not None and r.relationship_id != it` | A role-pinned node may only be entered via its designated relationship. Blocks the wrong role path from claiming the node. |
+| **out_node source** | `out_node.entry_from_alias is not None and in_node.alias != it` | A transitively-derived node may only be entered from its designated intermediate alias. Prevents `supplier_nation` from connecting to `customer_nation_region`. |
+| **in_node reverse guard** | `reverse and in_node.role_edge_id is not None and r.relationship_id != it` | A role-pinned node may expand *forward* freely (enabling transitive walks), but cannot be traversed *backwards* via a different edge. Prevents `supplier_nation` from reaching `customer` via reversed `customer_to_nation`. |
+
+All three checks are additive AND logic — any failure blocks the edge.
+
+### 2.5 Selective pruning
+
+Only datasets in `required_datasets` (plus bridges) are joined. The full
+relationship graph is never traversed. A request for `revenue` by
+`orders.o_orderyear` emits exactly two datasets (`lineitem`, `orders`);
+the `nation/region/part` fan-out is never touched.
+
+### 2.6 Comparison with prior art
+
+- **MetricFlow** builds a `DataflowPlan` DAG and classifies fields by
+  entity type (`primary`, `foreign`, `natural`). Its join resolver walks
+  entity graphs the same way ours walks relationships, but expressed as
+  Python objects emitting dialect-specific SQL via a templating layer.
+- **Databricks Metric Views** bake joins into the view definition at
+  creation time (`WITH JOINS`). The engine does not choose joins per
+  request. Ours chooses per request because the catalog owns both the
+  facts and the possible joins.
+- **Cube** uses a declarative join graph that it traverses at query time
+  with similar pruning semantics, but in a JS/Rust middleware layer
+  rather than in-database.
 
 ---
 
@@ -310,39 +347,36 @@ same.)
 
 ---
 
-## 7. Simplification strategy
+## 7. Design rationale
 
-Why in-database, as a stored procedure, instead of a middleware?
+Why Python in the same process as the API, rather than a stored procedure
+or a standalone middleware?
 
-| Aspect                    | In-proc (chosen)                             | Middleware (e.g. MetricFlow / Cube / Honeydew) |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------- |
-| Runtime dependencies      | Zero — runs inside Teradata                  | Python/JVM service, deployment pipeline       |
-| Catalog transactionality  | Native — catalog changes are immediately live | Cache invalidation problem                    |
-| Governance                | Catalog is inside Teradata — RBAC applies    | External service authorizes separately        |
-| SQL execution             | Already on the platform                      | Round-trip: compile remote, send SQL in       |
-| Language                  | Teradata SPL + SQL — constrained             | Python / Rust / Go — full freedom             |
-| Testability               | Procedural, call-and-inspect                 | Unit-testable objects                         |
-| Cross-platform reach      | Teradata only                                | Any supported dialect                         |
+| Aspect | Python in-process (chosen) | Pure SP (original design) | Standalone middleware |
+| --- | --- | --- | --- |
+| Testability | 146 unit tests, no DB required | Call-and-inspect only | Unit-testable but deploy overhead |
+| Catalog currency | One `SELECT` per compile — always live | Same | Cache invalidation risk |
+| Error handling | Full Python exceptions, structured errors | SPL SQLEXCEPTION blocks | Full language freedom |
+| SQL generation | sqlglot handles quoting, dialect nuance | String concatenation | Full freedom |
+| Governance | Teradata auth flows through to compiled SQL | Native RBAC | Separate auth layer |
+| Dependency | teradatasql driver only | Zero (inside TD) | JVM / Python service + deploy |
+| Cross-platform | Teradata only (sqlglot can retarget) | Teradata only | Any dialect |
+| MCP/REST co-location | Same process, zero latency | Separate call boundary | Network hop |
 
-The in-proc approach wins when:
+The Python-in-process approach wins here because:
 
-- The semantic catalog and the execution target are the same platform
-  (our case — Teradata).
-- Governance is important (policies on the catalog cascade to compiled
-  SQL automatically).
-- The user base already has Teradata authentication and doesn't want to
-  manage a second auth story.
+- The catalog is Teradata-hosted, so the compiler always has a live
+  connection. No caching layer is needed.
+- Unit tests run without a database — the `InMemoryCatalog` test double
+  covers the full compiler surface.
+- The same process hosts the REST API, MCP server, and GUI static files.
+  A compile call from an MCP tool has no extra network hops.
+- sqlglot handles Teradata quoting, `TOP N` vs `LIMIT`, and `LOCKING`
+  syntax without fragile string concatenation.
 
-It loses when:
-
-- You need to target multiple query engines from the same catalog.
-  MetricFlow / Cube make sense there because they emit dialect-
-  specific SQL from a neutral representation.
-- You want the catalog authored and versioned outside the database
-  (git as the source of truth).
-
-The OSI YAML export (`sp_export_osi_yaml`) is our escape hatch for the
-multi-platform case: any OSI-compatible engine can consume it.
+The escape hatch for multi-platform reach is the OSI YAML exporter
+(`semantic-catalog export` / `/api/export/osi`): any OSI-compatible
+engine can consume the exported model.
 
 ---
 
@@ -350,24 +384,18 @@ multi-platform case: any OSI-compatible engine can consume it.
 
 ### Near term
 
-1. **JSON request parsing.** Accept the full JSON payload from CLAUDE.md
-   directly. Use `NEW JSON(...)` + `JSON_TABLE` to extract arrays, then
-   run the same compiler on the normalized form.
-2. **Multi-hop bridge expansion.** Add a phase between steps 5 and 6
-   that, if any required dataset is unreachable, greedily pulls bridge
-   datasets into the required set. Bound it by `max_bridge_hops` to
-   avoid combinatorial explosion.
-3. **Chasm-trap detection.** See §5 option 1 — emit an error when
-   two distinct `MANY_TO_ONE` joins converge at a shared dimension.
-4. **Security policy enforcement.** Honor `SECURITY_POLICY.ROW_FILTER`
-   by injecting the policy expression into `WHERE` for the session
-   user's group.
-5. **Result streaming.** `p_execute = 1` opens a cursor on the compiled
-   SQL and returns rows as a dynamic result set (Python driver consumes
-   it; interactive clients pull from `request_result.result_json`).
-6. **Cost hints.** Read the EXPLAIN output, extract estimated row
-   counts, and drop them into `request_result` so an agent can decide
-   whether to auto-approve execution.
+1. **Chasm-trap detection.** See §5 option 1 — when two distinct
+   `MANY_TO_ONE` joins converge at a shared one-side dataset, emit a
+   compile-time error rather than producing inflated SQL.
+2. **Security policy enforcement.** Honor `SECURITY_POLICY.ROW_FILTER`
+   by injecting the policy expression into `WHERE` for the requesting
+   user's group. The table exists; the compiler doesn't read it yet.
+3. **Cost hints from EXPLAIN.** Parse the EXPLAIN output for estimated
+   row counts and surface them in the compile response so an agent can
+   decide whether to auto-approve execution.
+4. **Streaming execution results.** `/api/query/execute` currently
+   buffers the full result set. Large results should stream as
+   newline-delimited JSON.
 
 ### Medium term
 
@@ -379,9 +407,9 @@ multi-platform case: any OSI-compatible engine can consume it.
    time by recursively substituting constituent metric expressions. The
    `DERIVED` type is declared today but not yet used by the compiler.
 3. **Automated OSI round-trip.** Keep an OSI YAML document as a
-   notional source of truth; an import procedure loads it into the
-   catalog (reverse of `sp_export_osi_yaml`). This lets teams commit
-   model changes to git while keeping the live engine in Teradata.
+   notional source of truth; the importer loads it into the catalog
+   (reverse of `/api/export/osi`). This lets teams commit model
+   changes to git while keeping the live engine in Teradata.
 
 ### Long term
 
@@ -392,11 +420,10 @@ multi-platform case: any OSI-compatible engine can consume it.
    the optimizer handles chasm-avoidance automatically. Our catalog
    already carries every piece of metadata a native MEASURE would need;
    the engine becomes a thin translator.
-2. **MCP server integration.** Wrap `sp_semantic_search`,
-   `sp_semantic_describe`, and `sp_semantic_request` behind an MCP
-   server so Claude (and other agents) can call them without knowing
-   any SQL. The procedures already return well-typed result sets that
-   map cleanly to MCP tool schemas.
+2. **Richer MCP tool surface.** The MCP server (`/mcp/`) is already
+   shipped. Future tools could expose per-entity describe calls,
+   streaming execution, and EXPLAIN previews so agents can make
+   cost-aware decisions before running queries.
 3. **OSI compatibility layer.** Complete the round-trip: OSI-compliant
    models in, OSI YAML out, and — when paired with the import procedure
    — a full interchange story across OSI adopters.
@@ -413,8 +440,8 @@ multi-platform case: any OSI-compatible engine can consume it.
 | Cube           | Apache 2.0 | Join-path resolution against a declarative graph;         |
 |                |            | pre-aggregation matching. Architectural inspiration.      |
 | dotML          | Apache 2.0 | Minimal YAML → SQL compiler (~500 LOC Python). Our        |
-|                |            | in-proc BFS is conceptually similar, just expressed in    |
-|                |            | SPL + catalog tables.                                     |
+|                |            | resolver + BFS is architecturally similar but             |
+|                |            | catalog-driven rather than YAML-file-driven.              |
 | Apache Calcite | Apache 2.0 | Long-term target for native MEASURE() semantics;          |
 |                |            | Julian Hyde's papers on SQL 2023 MEASURE.                 |
 
@@ -422,56 +449,68 @@ multi-platform case: any OSI-compatible engine can consume it.
 
 ## Appendix B — Request-time pseudocode
 
-```
-INPUT: p_model_name, p_metrics, p_dimensions,
-       p_where_filters, p_having_filters, p_sort, p_row_limit, p_execute
+This reflects the actual Python compiler. All DB I/O is `SELECT`; no
+staging tables, no writes during compilation.
 
-clear_staging()
+```python
+# compiler/orchestrator.py  compile(req, catalog) → LogicalPlan
 
-model_id ← resolve(p_model_name)
-for metric_name in split(p_metrics, ','):
-    (metric_id, expr, primary_ds) ← resolve_metric(metric_name, model_id)
-    request_metric.insert((metric_id, metric_name, expr, primary_ds))
-    required_ds.add(datasets_referenced_by(metric_id))
+# ── resolver.py ─────────────────────────────────────────────────────────────
+model_id = catalog.resolve_model_id(req.model)          # DB SELECT
+required  = _RequiredIndex()
 
-for dim_spec in split(p_dimensions, ','):
-    (dataset, field) ← parse_ds_field(dim_spec)
-    field_id ← resolve_field(dataset, field, model_id)
-    request_dim.insert((field_id, dataset, field, ...))
-    required_ds.add(dataset_of(field_id))
+metrics = []
+for name in req.metrics:
+    metric = catalog.find_metric(model_id, name)        # DB SELECT
+    expr   = _compose_expression(metric, catalog)       # DB SELECT × depth
+    required.add(catalog.load_dataset(metric.primary_dataset_id))
+    metrics.append(MetricRef(metric_name=name, expression=expr, ...))
 
-anchor ← primary_ds_of_first_metric() OR most_central_required()
-mark_in_plan(anchor)
-emit "FROM <anchor_physical> AS <anchor_dataset>"
+dims = []
+for token in req.dimensions:
+    field_part, grain = _split_grain(token)
+    prefix, field_name = _split_prefix(field_part)
 
-while has_unplanned_required():
-    cand ← pick_best_neighbor_of_planned()
-    if cand is None: break
-    join_sql ← build_join(cand, relationship_id, rel_column_map)
-    emit join_sql
-    mark_in_plan(cand)
+    if prefix and (role_rel := catalog.find_relationship_by_role(model_id, prefix)):
+        # role-prefixed: reach target via pinned relationship
+        target_ds = catalog.load_dataset(role_rel.to_dataset_id)  # DB SELECT
+        field = catalog.find_field_on_dataset(target_ds.id, field_name)
+        if field is None:
+            # transitive: BFS over outgoing rels from target_ds
+            field, final_ds, intermediates, last_rel_id, entry_from = \
+                _walk_transitive_role(model_id, ...)     # DB SELECT × hops
+            required.add(target_ds, alias=prefix)
+            required.add(final_ds,  alias=f"{prefix}_{final_ds.name}",
+                         role_edge_id=last_rel_id, entry_from_alias=entry_from)
+        else:
+            required.add(target_ds, alias=prefix)
+        dims.append(ResolvedDim(field=field, dataset_alias=..., role_edge_id=...))
+    else:
+        # unambiguous or plain dataset.field
+        field = catalog.find_field(model_id, prefix, field_name)  # DB SELECT
+        _check_unambiguous(model_id, field.dataset_id, token)      # DB SELECT
+        required.add(catalog.load_dataset(field.dataset_id))
+        dims.append(ResolvedDim(field=field, dataset_alias=prefix or ds.name))
 
-if has_unplanned_required():
-    is_valid ← 0
-    validation_message ← "unreachable: <list>"
+anchor = _pick_anchor(required, metrics)
+plan   = LogicalPlan(model_id=model_id, anchor=anchor,
+                     required_datasets=required.as_list(),
+                     metrics=metrics, dimensions=dims, ...)
 
-select_list ← emit_dims() ++ emit_metrics()
-where ← emit_where_filters(p_where_filters)
-group_by ← emit_group_by(request_dim) if request_metric else ''
-having ← emit_having_filters(p_having_filters)
-order_by ← emit_order_by(p_sort)
-top ← emit_top(p_row_limit)
+# ── joins.py ─────────────────────────────────────────────────────────────────
+rels = catalog.load_relationships(model_id)              # DB SELECT (one query)
+JoinResolver(catalog, model_id).resolve(plan)
+# → plan.join_steps filled; plan.unresolved lists unreachable datasets
 
-v_sql ← "LOCKING ROW FOR ACCESS\nSELECT " + top + select_list + "\n" +
-        "  " + from_clause + where + group_by + having + order_by
+# ── render.py ─────────────────────────────────────────────────────────────────
+sql = render(plan)   # pure Python + sqlglot, zero DB I/O
+# → "LOCKING ROW FOR ACCESS\nSELECT TOP N ...\nFROM ...\nINNER JOIN ...\n..."
 
-try:
-    CALL DBC.SysExecSQL('EXPLAIN ' || v_sql)
-except:
-    is_valid ← 0
-    validation_message ← "EXPLAIN failed"
-
-persist(v_sql, is_valid, validation_message, anchor_name, joined_list)
+# ── caller (api/query.py) ────────────────────────────────────────────────────
+explain_result = conn.execute(f"EXPLAIN {sql}")          # DB EXPLAIN SELECT
+if execute:
+    rows = conn.execute(sql)                             # DB data SELECT
+return CompileResponse(compiled_sql=sql, is_valid=..., ...)
 ```
 
 ---
@@ -480,30 +519,41 @@ persist(v_sql, is_valid, validation_message, anchor_name, joined_list)
 
 ```
 semantic-layer/
-├── CLAUDE.md                              — task spec
 ├── docs/developer/
 │   ├── semantic-catalog-design.md         — conceptual / logical design
 │   └── sql-compilation-engine-design.md   — this document
-└── sql/
-    ├── 00_drop_all.sql                    — idempotent drop for re-runs
-    ├── 01_ddl_enums.sql                   — reference tables
-    ├── 02_ddl_core.sql                    — SEMANTIC_MODEL / DATASET / FIELD / DATASET_KEY
-    ├── 03_ddl_relationships.sql           — RELATIONSHIP / REL_COLUMN_MAP
-    ├── 04_ddl_metrics.sql                 — METRIC / METRIC_EXPRESSION / METRIC_FIELD_REF
-    ├── 05_ddl_views.sql                   — SEMANTIC_VIEW / VIEW_MEMBER
-    ├── 06_ddl_metadata.sql                — AI_CONTEXT / FORMAT_SPEC / SECURITY_POLICY / CUSTOM_EXTENSION
-    ├── 07_comments.sql                    — all table / column comments
-    ├── 08_collect_stats.sql               — statistics seeding
-    ├── 09_seed_enums.sql                  — enum seed data
-    ├── 10_scenario_tpch_osi.sql           — Scenario A
-    ├── 11_scenario_tpch_orders.sql        — Scenario B (Honeydew-style)
-    ├── 12_scenario_exec_dashboard.sql     — Scenario C (cube)
-    ├── 19_gtt_yaml_tmp.sql                — yaml_tmp buffer table (superseded)
-    ├── 20_export_osi.sql                  — sp_export_osi_yaml
-    ├── 30_sp_semantic_search.sql          — m_semantic_search (macro)
-    ├── 31_sp_semantic_describe.sql        — m_semantic_describe (macro)
-    ├── 32_request_staging.sql             — staging tables for compiler
-    ├── 33_sp_semantic_request.sql         — sp_semantic_request (the compiler)
-    └── run_sp.py                          — helper to compile stored objects
-                                            (tq splits on ';' inside SP bodies)
+├── src/semantic_catalog/
+│   ├── __main__.py                        — CLI: serve | install | install-example | ping | deploy
+│   ├── compiler/
+│   │   ├── catalog.py                     — CatalogDAO abstract interface (SELECTs only)
+│   │   ├── db_catalog.py                  — DbCatalog: live Teradata reads via teradatasql
+│   │   ├── inmem_catalog.py               — InMemoryCatalog: test double (no DB required)
+│   │   ├── logical.py                     — DatasetRef, FieldRef, MetricRef, ResolvedDim,
+│   │   │                                    LogicalPlan, JoinStep, …
+│   │   ├── request.py                     — CompileRequest, CompileFilter, CompileSort
+│   │   ├── errors.py                      — CompileError, AmbiguousPathError,
+│   │   │                                    UnknownEntityError, UnresolvedJoinError, …
+│   │   ├── resolver.py                    — CompileRequest → LogicalPlan
+│   │   │                                    (metric / dim / filter resolution,
+│   │   │                                    role-playing, transitive walks, anchor)
+│   │   ├── joins.py                       — JoinResolver: BFS join planning
+│   │   │                                    (_edge_allowed, _add_bridge)
+│   │   ├── render.py                      — LogicalPlan → Teradata SQL (sqlglot)
+│   │   └── orchestrator.py               — compile(req, catalog) entry point
+│   ├── api/
+│   │   ├── catalog.py                     — /api/models, /tree, /graph, /search, /describe
+│   │   └── query.py                       — /api/query/compile, /execute, /explain
+│   ├── mcp/
+│   │   ├── server.py                      — MCP Streamable HTTP at /mcp/
+│   │   └── tools.py                       — semantic.compile, semantic.execute, …
+│   └── sql_bundle/                        — DDL + m_semantic_search / m_semantic_describe macros
+│                                            (deployed to Teradata by `semantic-catalog install`)
+├── examples/
+│   ├── tpch_orders/                       — TPC-H sample data + semantic model SQL
+│   └── school_gradebook/                  — gradebook sample (filtered metrics, roles)
+└── tests/
+    ├── test_compiler_resolver.py          — resolver unit tests (InMemoryCatalog)
+    ├── test_compiler_joins.py             — BFS + render end-to-end tests
+    ├── test_api_fake.py                   — FastAPI routes against FakePool
+    └── test_live_smoke.py                 — end-to-end against real Teradata (marker: live)
 ```

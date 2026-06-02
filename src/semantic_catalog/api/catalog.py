@@ -15,6 +15,7 @@ from .models import (
     GraphNode,
     GraphPayload,
     ModelSummary,
+    RelationshipHint,
     SearchHit,
 )
 
@@ -236,6 +237,22 @@ def describe(
             )
             for a in result.attributes
         ],
+        relationships=(
+            [
+                RelationshipHint(
+                    prefix=h.prefix,
+                    direction=h.direction,
+                    other_dataset=h.other_dataset,
+                    cardinality=h.cardinality,
+                    role_name=h.role_name,
+                    relationship_name=h.relationship_name,
+                    relationship_id=h.relationship_id,
+                )
+                for h in result.relationships
+            ]
+            if result.relationships is not None
+            else None
+        ),
     )
 
 

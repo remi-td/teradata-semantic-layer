@@ -54,7 +54,8 @@ def _build_role_map(relationships: List[RelationshipRow]) -> Dict[str, int]:
 class _PlanNode:
     dataset: DatasetRef
     in_plan: bool = False
-    role_edge_id: Optional[int] = None   # constraint on the edge used to enter
+    role_edge_id: Optional[int] = None    # which relationship must be used to enter
+    entry_from_alias: Optional[str] = None  # which in-plan alias must be the source
 
 
 class JoinResolver:
@@ -107,9 +108,16 @@ class JoinResolver:
         nodes: Dict[Tuple[int, str], _PlanNode] = {}
         for ds in plan.required_datasets:
             key = (ds.dataset_id, ds.alias)
-            # Alias = role_name → pinned to that edge. Otherwise no constraint.
-            role_rel_id = self.role_map.get(ds.alias)
-            nodes[key] = _PlanNode(dataset=ds, role_edge_id=role_rel_id)
+            # Prefer explicit constraints stored on DatasetRef (set by the resolver
+            # for transitively-reached datasets).  Fall back to role_map for
+            # directly role-played aliases (e.g. customer_nation).
+            role_rel_id = ds.role_edge_id if ds.role_edge_id is not None \
+                else self.role_map.get(ds.alias)
+            nodes[key] = _PlanNode(
+                dataset=ds,
+                role_edge_id=role_rel_id,
+                entry_from_alias=ds.entry_from_alias,
+            )
         # Ensure anchor is present
         anchor_key = (plan.anchor.dataset_id, plan.anchor.alias)
         if anchor_key not in nodes:
@@ -197,11 +205,26 @@ class JoinResolver:
     def _edge_allowed(self, r: RelationshipRow,
                       in_node: _PlanNode, out_node: _PlanNode,
                       *, reverse: bool) -> bool:
-        """Role-constraint check: if either endpoint is pinned to a
-        specific relationship, the edge must match."""
-        if in_node.role_edge_id is not None and in_node.role_edge_id != r.relationship_id:
-            return False
+        """Role-constraint checks for the edge entering *out_node*.
+
+        1. *out_node* pin: if the node being joined to is pinned to a specific
+           relationship, the edge must match.
+        2. *out_node* source: if the node being joined to requires a specific
+           source alias (set for transitive datasets like ``supplier_nation_region``),
+           the in-plan node's alias must match.
+        3. *in_node* reverse guard: a role-pinned node must not be traversed
+           BACKWARDS via a different relationship — that would route through the
+           wrong role (e.g. reaching ``customer`` from ``supplier_nation`` by
+           reversing ``customer_to_nation``).  Forward expansion is unrestricted.
+        """
         if out_node.role_edge_id is not None and out_node.role_edge_id != r.relationship_id:
+            return False
+        if (out_node.entry_from_alias is not None
+                and in_node.dataset.alias != out_node.entry_from_alias):
+            return False
+        if (reverse
+                and in_node.role_edge_id is not None
+                and in_node.role_edge_id != r.relationship_id):
             return False
         return True
 

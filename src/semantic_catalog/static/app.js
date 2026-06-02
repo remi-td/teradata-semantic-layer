@@ -762,36 +762,72 @@ function openPicker(anchor, kind, onPick) {
     // Role-play awareness. For each dataset, count incoming relationships.
     // If >1, the dataset is role-played and the plain `dataset.field` token
     // is ambiguous — surface one entry per role_name instead.
-    const inBy = {};   // ds_name -> [{role_name, relationship_name}]
+    const inBy = {};   // ds_name -> [{...rel}]
+    const outBy = {};  // ds_name -> [{...rel}]
     (state.tree.relationships || []).forEach(r => {
-      (inBy[r.to] = inBy[r.to] || []).push(r);
+      (inBy[r.to]   = inBy[r.to]   || []).push(r);
+      (outBy[r.from] = outBy[r.from] || []).push(r);
     });
+
+    const dsMap = {};
+    (state.tree.datasets || []).forEach(ds => { dsMap[ds.name] = ds; });
+
+    // Collect fields reachable from a role prefix via BFS over outgoing rels.
+    // Returns [{key, label, sub}] — fields on the direct target AND on any
+    // transitively reachable dataset (e.g. customer_nation.r_name via nation→region).
+    function fieldsForRole(prefix, startDsName, viaFromName) {
+      const result = [];
+      const visited = new Set();
+      const queue = [[startDsName, false]]; // [dsName, isTransitive]
+      while (queue.length) {
+        const [curName, isTransitive] = queue.shift();
+        if (visited.has(curName)) continue;
+        visited.add(curName);
+        const curDs = dsMap[curName];
+        if (!curDs) continue;
+        (curDs.fields || []).forEach(f => {
+          if (!f.is_dimension && f.type !== 'K' && !f.is_time_dimension) return;
+          const grainSuffix = f.is_time_dimension ? ':MONTH' : '';
+          const typeTag = f.is_time_dimension ? 'time' : (f.type === 'K' ? 'key' : 'dimension');
+          const transitiveNote = isTransitive ? ` · via ${curName}` : '';
+          result.push({
+            key: `${prefix}.${f.name}${grainSuffix}`,
+            label: `${prefix}.${f.name}`,
+            sub: `${typeTag} · via ${viaFromName}${transitiveNote}`,
+          });
+        });
+        // Walk outgoing edges to gather transitive fields
+        (outBy[curName] || []).forEach(r => {
+          if (!visited.has(r.to)) queue.push([r.to, true]);
+        });
+      }
+      return result;
+    }
 
     (state.tree.datasets || []).forEach(ds => {
       const incoming = inBy[ds.name] || [];
       const rolePlayed = incoming.length > 1;
-      (ds.fields || []).forEach(f => {
-        if (!f.is_dimension && f.type !== 'K' && !f.is_time_dimension) return;
-        const grainSuffix = f.is_time_dimension ? ':MONTH' : '';
-        const typeTag = f.is_time_dimension ? 'time' : (f.type === 'K' ? 'key' : 'dimension');
-        if (!rolePlayed) {
+      if (!rolePlayed) {
+        // Unambiguous dataset: surface its own fields with plain dataset.field tokens.
+        // Do NOT surface transitive fields here — they'll be captured under their
+        // own dataset entries (or under role prefixes if role-played).
+        (ds.fields || []).forEach(f => {
+          if (!f.is_dimension && f.type !== 'K' && !f.is_time_dimension) return;
+          const grainSuffix = f.is_time_dimension ? ':MONTH' : '';
+          const typeTag = f.is_time_dimension ? 'time' : (f.type === 'K' ? 'key' : 'dimension');
           items.push({
             key: `${ds.name}.${f.name}${grainSuffix}`,
             label: `${ds.name}.${f.name}`,
             sub: typeTag,
           });
-          return;
-        }
-        // Role-played: one entry per role. If any role has no role_name
-        // declared, warn in the picker so the modeller knows it's a gap.
-        incoming.forEach(r => {
-          const prefix = r.role_name || r.name; // fall back to relationship_name
-          items.push({
-            key: `${prefix}.${f.name}${grainSuffix}`,
-            label: `${prefix}.${f.name}`,
-            sub: `${typeTag} · via ${r.from}${r.role_name ? '' : ' (no role_name)'}`,
-          });
         });
+        return;
+      }
+      // Role-played: one entry per role, including fields from transitively
+      // reachable datasets (e.g. customer_nation.r_name via nation→region).
+      incoming.forEach(r => {
+        const prefix = r.role_name || r.name;
+        fieldsForRole(prefix, ds.name, r.from).forEach(item => items.push(item));
       });
     });
   }

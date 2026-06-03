@@ -23,7 +23,8 @@ SELECT sm.model_id,
        d.dataset_id,
        'SIMPLE', 1, 1, 'supply_chain', NULL
   FROM demo_user.SEMANTIC_MODEL sm
-  JOIN demo_user.DATASET d ON d.model_id = sm.model_id AND d.dataset_name='partsupp'
+  JOIN demo_user.MODEL_DATASET md ON md.model_id = sm.model_id
+  JOIN demo_user.DATASET d ON d.dataset_id = md.dataset_id AND d.dataset_name='partsupp'
  WHERE sm.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC (model_id, metric_name, description, primary_dataset_id, metric_type, is_additive, is_certified, owner_team, default_time_grain)
@@ -33,7 +34,8 @@ SELECT sm.model_id,
        d.dataset_id,
        'SIMPLE', 1, 1, 'supply_chain', NULL
   FROM demo_user.SEMANTIC_MODEL sm
-  JOIN demo_user.DATASET d ON d.model_id = sm.model_id AND d.dataset_name='partsupp'
+  JOIN demo_user.MODEL_DATASET md ON md.model_id = sm.model_id
+  JOIN demo_user.DATASET d ON d.dataset_id = md.dataset_id AND d.dataset_name='partsupp'
  WHERE sm.model_name='tpch_orders';
 
 INSERT INTO demo_user.METRIC_EXPRESSION (metric_id, dialect, expression)
@@ -60,7 +62,8 @@ INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT m.metric_id, f.field_id, 'MEASURE'
   FROM demo_user.METRIC m
   JOIN demo_user.SEMANTIC_MODEL sm ON sm.model_id=m.model_id
-  JOIN demo_user.DATASET d ON d.model_id=sm.model_id AND d.dataset_name='partsupp'
+  JOIN demo_user.MODEL_DATASET md ON md.model_id=sm.model_id
+  JOIN demo_user.DATASET d ON d.dataset_id=md.dataset_id AND d.dataset_name='partsupp'
   JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='ps_availqty'
  WHERE sm.model_name='tpch_orders' AND m.metric_name='total_availqty';
 
@@ -68,6 +71,7 @@ INSERT INTO demo_user.METRIC_FIELD_REF (metric_id, field_id, dep_role)
 SELECT m.metric_id, f.field_id, 'MEASURE'
   FROM demo_user.METRIC m
   JOIN demo_user.SEMANTIC_MODEL sm ON sm.model_id=m.model_id
-  JOIN demo_user.DATASET d ON d.model_id=sm.model_id AND d.dataset_name='partsupp'
+  JOIN demo_user.MODEL_DATASET md ON md.model_id=sm.model_id
+  JOIN demo_user.DATASET d ON d.dataset_id=md.dataset_id AND d.dataset_name='partsupp'
   JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id AND f.field_name='ps_supplycost'
  WHERE sm.model_name='tpch_orders' AND m.metric_name='total_supplycost';

@@ -60,17 +60,13 @@ REPLACE MACRO demo_user.m_semantic_describe(
         UNION ALL
         SELECT 10, 'dataset', d.dataset_name
           FROM demo_user.SEMANTIC_MODEL m
-          JOIN demo_user.DATASET d ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.model_id=m.model_id
+          JOIN demo_user.DATASET d ON d.dataset_id=md.dataset_id
          WHERE UPPER(:p_entity_type)='MODEL' AND m.model_name = :p_entity_name
         UNION ALL
         SELECT 11, 'metric', mt.metric_name
           FROM demo_user.SEMANTIC_MODEL m
           JOIN demo_user.METRIC mt ON mt.model_id=m.model_id
-         WHERE UPPER(:p_entity_type)='MODEL' AND m.model_name = :p_entity_name
-        UNION ALL
-        SELECT 12, 'view', v.view_name
-          FROM demo_user.SEMANTIC_MODEL m
-          JOIN demo_user.SEMANTIC_VIEW v ON v.model_id=m.model_id
          WHERE UPPER(:p_entity_type)='MODEL' AND m.model_name = :p_entity_name
 
         UNION ALL
@@ -95,7 +91,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
                    CAST(CASE WHEN d.DataBaseName IS NOT NULL THEN TRIM(d.DataBaseName) || '.' || TRIM(d.TableName) ELSE '' END AS VARCHAR(4000)) AS c_source_table,
                    CAST(CASE WHEN d.source_query IS NOT NULL THEN 'true' ELSE 'false' END AS VARCHAR(4000)) AS c_has_source_query
               FROM demo_user.DATASET d
-              JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+              JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
              WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
                AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
         ) src UNPIVOT (attr_value FOR attr_key IN (
@@ -111,7 +108,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         UNION ALL
         SELECT 20, 'pk_field', f.field_name
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.DATASET_KEY dk ON dk.dataset_id=d.dataset_id AND dk.key_type='PK'
           JOIN demo_user.FIELD f ON f.field_id=dk.field_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
@@ -122,7 +120,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
                CASE WHEN f.is_dimension=1 THEN ' (dim)' ELSE '' END ||
                CASE WHEN f.field_type_code='K' THEN ' (key)' ELSE '' END
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.FIELD f ON f.dataset_id=d.dataset_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
            AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
@@ -130,7 +129,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         SELECT 40, 'outgoing_relationship',
                r.relationship_name || ' -> ' || dt.dataset_name || ' [' || r.cardinality || ']'
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.RELATIONSHIP r ON r.from_dataset_id=d.dataset_id
           JOIN demo_user.DATASET dt ON dt.dataset_id=r.to_dataset_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
@@ -139,7 +139,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         SELECT 41, 'incoming_relationship',
                r.relationship_name || ' <- ' || df.dataset_name || ' [' || r.cardinality || ']'
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.RELATIONSHIP r ON r.to_dataset_id=d.dataset_id
           JOIN demo_user.DATASET df ON df.dataset_id=r.from_dataset_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
@@ -147,7 +148,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         UNION ALL
         SELECT 50, 'ai_instructions', ac.instructions
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='DATASET' AND ac.entity_id=d.dataset_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
            AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
@@ -155,7 +157,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         UNION ALL
         SELECT 51, 'ai_synonyms', CAST(ac.synonyms AS VARCHAR(4000))
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='DATASET' AND ac.entity_id=d.dataset_id
          WHERE UPPER(:p_entity_type)='DATASET' AND d.dataset_name = :p_entity_name
            AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
@@ -189,7 +192,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
                         AS VARCHAR(4000)) AS c_flags
               FROM demo_user.FIELD f
               JOIN demo_user.DATASET d ON f.dataset_id=d.dataset_id
-              JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+              JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
              WHERE UPPER(:p_entity_type)='FIELD'
                AND (f.field_name = :p_entity_name
                     OR d.dataset_name || '.' || f.field_name = :p_entity_name)
@@ -208,7 +212,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
         SELECT 10, 'ai_synonyms', CAST(ac.synonyms AS VARCHAR(4000))
           FROM demo_user.FIELD f
           JOIN demo_user.DATASET d ON f.dataset_id=d.dataset_id
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='FIELD' AND ac.entity_id=f.field_id
          WHERE UPPER(:p_entity_type)='FIELD'
            AND (f.field_name = :p_entity_name
@@ -222,7 +227,8 @@ REPLACE MACRO demo_user.m_semantic_describe(
                CASE WHEN fs.decimal_places IS NOT NULL THEN '|dp=' || TRIM(CAST(fs.decimal_places AS VARCHAR(4))) ELSE '' END
           FROM demo_user.FIELD f
           JOIN demo_user.DATASET d ON f.dataset_id=d.dataset_id
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id=m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id=d.dataset_id
+              JOIN demo_user.SEMANTIC_MODEL m ON m.model_id=md.model_id
           JOIN demo_user.FORMAT_SPEC fs ON fs.entity_type='FIELD' AND fs.entity_id=f.field_id
          WHERE UPPER(:p_entity_type)='FIELD'
            AND (f.field_name = :p_entity_name
@@ -307,51 +313,6 @@ REPLACE MACRO demo_user.m_semantic_describe(
          WHERE UPPER(:p_entity_type)='METRIC' AND mt.metric_name = :p_entity_name
            AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
 
-        UNION ALL
-
-        -- =================== VIEW ===================
-        -- Scalars: entity_type, name, model, description, timeseries
-        SELECT (CASE u.attr_key
-                    WHEN 'entity_type' THEN 1
-                    WHEN 'name'        THEN 2
-                    WHEN 'model'       THEN 3
-                    WHEN 'description' THEN 4
-                    WHEN 'timeseries'  THEN 6 ELSE 99 END) AS attr_ordinal,
-               u.attr_key, u.attr_value
-        FROM (
-            SELECT CAST('VIEW' AS VARCHAR(4000)) AS c_entity_type,
-                   CAST(v.view_name AS VARCHAR(4000)) AS c_name,
-                   CAST(m.model_name AS VARCHAR(4000)) AS c_model,
-                   CAST(SUBSTRING(COALESCE(v.description,'') FROM 1 FOR 4000) AS VARCHAR(4000)) AS c_description,
-                   CAST(COALESCE(v.timeseries_field,'') AS VARCHAR(4000)) AS c_timeseries
-              FROM demo_user.SEMANTIC_VIEW v
-              JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-             WHERE UPPER(:p_entity_type)='VIEW' AND v.view_name = :p_entity_name
-               AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
-        ) src UNPIVOT (attr_value FOR attr_key IN (
-            c_entity_type AS 'entity_type',
-            c_name        AS 'name',
-            c_model       AS 'model',
-            c_description AS 'description',
-            c_timeseries  AS 'timeseries'
-        )) u
-
-        UNION ALL
-        SELECT 5, 'primary_dataset', d.dataset_name
-          FROM demo_user.SEMANTIC_VIEW v
-          JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-          JOIN demo_user.DATASET d ON d.dataset_id=v.primary_dataset_id
-         WHERE UPPER(:p_entity_type)='VIEW' AND v.view_name = :p_entity_name
-           AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
-        UNION ALL
-        SELECT 10 + vm.member_ordinal, 'member_' || vm.member_type,
-               vm.member_name ||
-               CASE WHEN vm.display_name IS NOT NULL THEN ' = "' || vm.display_name || '"' ELSE '' END
-          FROM demo_user.SEMANTIC_VIEW v
-          JOIN demo_user.SEMANTIC_MODEL m ON v.model_id=m.model_id
-          JOIN demo_user.VIEW_MEMBER vm ON vm.view_id=v.view_id
-         WHERE UPPER(:p_entity_type)='VIEW' AND v.view_name = :p_entity_name
-           AND (:p_model_name IS NULL OR m.model_name = :p_model_name)
     ) x
     ORDER BY x.attr_ordinal, x.attr_key, x.attr_value;
 );

@@ -33,7 +33,8 @@ REPLACE MACRO demo_user.m_semantic_search(
                      WHEN LOWER(COALESCE(d.description,'')) LIKE '%' || LOWER(:p_term) || '%' THEN CAST(20  AS INTEGER)
                      ELSE CAST(0 AS INTEGER) END)                                             AS relevance
           FROM demo_user.DATASET d
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id = m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+          JOIN demo_user.SEMANTIC_MODEL m ON m.model_id = md.model_id
           LEFT JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='DATASET' AND ac.entity_id=d.dataset_id
          WHERE (:p_model_name IS NULL OR m.model_name = :p_model_name)
            AND LOWER(COALESCE(d.dataset_name,'') || '|' || COALESCE(d.description,'') || '|' || COALESCE(ac.display_name,'') || '|' || COALESCE(ac.instructions,'') || '|' || COALESCE(CAST(ac.synonyms AS VARCHAR(1000)),'')) LIKE '%' || LOWER(:p_term) || '%'
@@ -56,7 +57,8 @@ REPLACE MACRO demo_user.m_semantic_search(
                      ELSE CAST(0 AS INTEGER) END)
           FROM demo_user.FIELD f
           JOIN demo_user.DATASET d ON f.dataset_id = d.dataset_id
-          JOIN demo_user.SEMANTIC_MODEL m ON d.model_id = m.model_id
+          JOIN demo_user.MODEL_DATASET md ON md.dataset_id = d.dataset_id
+          JOIN demo_user.SEMANTIC_MODEL m ON m.model_id = md.model_id
           LEFT JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='FIELD' AND ac.entity_id=f.field_id
          WHERE (:p_model_name IS NULL OR m.model_name = :p_model_name)
            AND LOWER(COALESCE(f.field_name,'') || '|' || COALESCE(f.label,'') || '|' || COALESCE(f.description,'') || '|' || COALESCE(ac.display_name,'') || '|' || COALESCE(CAST(ac.synonyms AS VARCHAR(1000)),'')) LIKE '%' || LOWER(:p_term) || '%'
@@ -81,25 +83,6 @@ REPLACE MACRO demo_user.m_semantic_search(
          WHERE (:p_model_name IS NULL OR m.model_name = :p_model_name)
            AND LOWER(COALESCE(mt.metric_name,'') || '|' || COALESCE(mt.description,'') || '|' || COALESCE(ac.display_name,'') || '|' || COALESCE(ac.instructions,'') || '|' || COALESCE(CAST(ac.synonyms AS VARCHAR(1000)),'')) LIKE '%' || LOWER(:p_term) || '%'
 
-        UNION ALL
-
-        -- SEMANTIC VIEWS
-        SELECT CAST('VIEW' AS VARCHAR(20)),
-               CAST(v.view_name AS VARCHAR(200)),
-               CAST(m.model_name AS VARCHAR(200)),
-               CAST(SUBSTRING(COALESCE(v.description,'') FROM 1 FOR 300) AS VARCHAR(300)),
-               CAST(COALESCE(CAST(ac.synonyms AS VARCHAR(1000)), '') AS VARCHAR(1000)),
-               (CASE WHEN LOWER(v.view_name) = LOWER(:p_term)                                 THEN CAST(100 AS INTEGER)
-                     WHEN LOWER(v.view_name) LIKE '%' || LOWER(:p_term) || '%'                THEN CAST(70  AS INTEGER)
-                     WHEN LOWER(COALESCE(ac.display_name,'')) LIKE '%' || LOWER(:p_term) || '%' THEN CAST(55  AS INTEGER)
-                     WHEN LOWER(COALESCE(CAST(ac.synonyms AS VARCHAR(1000)),'')) LIKE '%' || LOWER(:p_term) || '%' THEN CAST(45 AS INTEGER)
-                     WHEN LOWER(COALESCE(v.description,'')) LIKE '%' || LOWER(:p_term) || '%' THEN CAST(25  AS INTEGER)
-                     ELSE CAST(0 AS INTEGER) END)
-          FROM demo_user.SEMANTIC_VIEW v
-          JOIN demo_user.SEMANTIC_MODEL m ON v.model_id = m.model_id
-          LEFT JOIN demo_user.AI_CONTEXT ac ON ac.entity_type='VIEW' AND ac.entity_id=v.view_id
-         WHERE (:p_model_name IS NULL OR m.model_name = :p_model_name)
-           AND LOWER(COALESCE(v.view_name,'') || '|' || COALESCE(v.description,'') || '|' || COALESCE(ac.display_name,'') || '|' || COALESCE(CAST(ac.synonyms AS VARCHAR(1000)),'')) LIKE '%' || LOWER(:p_term) || '%'
 
     ) h
     WHERE h.relevance > 0
